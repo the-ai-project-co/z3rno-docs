@@ -1,0 +1,105 @@
+---
+title: Quickstart
+description: "Install the SDK and store your first memory in under 5 minutes."
+---
+
+# Quickstart
+
+<Note>
+This page is a stub while the MVP is being built. The final quickstart will ship in Week 6 of Phase 1. For now, here is the shape of the developer experience we are targeting.
+</Note>
+
+## 1. Install the SDK
+
+<CodeGroup>
+
+```bash Python
+pip install z3rno
+```
+
+```bash TypeScript
+npm install @z3rno/sdk
+```
+
+</CodeGroup>
+
+## 2. Start a local Z3rno instance (optional)
+
+If you want to run Z3rno locally instead of using the managed cloud:
+
+```bash
+git clone https://github.com/the-ai-project-co/z3rno-server
+cd z3rno-server
+docker compose -f docker-compose.dev.yml up
+# Server at http://localhost:8000
+```
+
+## 3. Store and recall your first memory
+
+<CodeGroup>
+
+```python Python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",      # or https://api.z3rno.dev
+    api_key="z3rno_sk_test_localdev",
+)
+
+# Store a memory
+memory = client.store(
+    agent_id="agent-1",
+    content="User prefers dark mode and uses Python.",
+    memory_type="semantic",
+)
+
+# Recall memories
+results = client.recall(
+    agent_id="agent-1",
+    query="What does the user prefer?",
+    top_k=5,
+)
+
+for r in results:
+    print(f"{r.content} (relevance: {r.relevance_score:.2f})")
+```
+
+```typescript TypeScript
+import { Z3rnoClient } from '@z3rno/sdk';
+
+const client = new Z3rnoClient({
+  baseUrl: 'http://localhost:8000',       // or https://api.z3rno.dev
+  apiKey: 'z3rno_sk_test_localdev',
+});
+
+// Store a memory
+const memory = await client.store({
+  agentId: 'agent-1',
+  content: 'User prefers dark mode and uses TypeScript.',
+  memoryType: 'semantic',
+});
+
+// Recall memories
+const results = await client.recall({
+  agentId: 'agent-1',
+  query: 'What does the user prefer?',
+  topK: 5,
+});
+
+for (const r of results) {
+  console.log(`${r.content} (relevance: ${r.relevanceScore.toFixed(2)})`);
+}
+```
+
+</CodeGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="brain" href="/concepts/memory-types">
+    Understand the four memory types, the lifecycle, and how temporal versioning works.
+  </Card>
+  <Card title="Framework Integrations" icon="plug" href="/integrations/langchain">
+    Drop Z3rno into LangChain, CrewAI, OpenAI Agents, or Claude via MCP.
+  </Card>
+</CardGroup>

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Z3rno",
+  "logo": {
+    "dark": "/logo/z3rno-wordmark-dark.svg",
+    "light": "/logo/z3rno-wordmark-light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#00D4AA",
+    "light": "#00D4AA",
+    "dark": "#00A88D"
+  },
+  "topbarCtaButton": {
+    "name": "GitHub",
+    "url": "https://github.com/the-ai-project-co"
+  },
+  "topbarLinks": [
+    {
+      "name": "Support",
+      "url": "mailto:support@z3rno.dev"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "API Reference",
+      "icon": "rectangle-terminal",
+      "url": "api-reference"
+    },
+    {
+      "name": "Community",
+      "icon": "discord",
+      "url": "https://discord.gg/z3rno"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "introduction",
+        "quickstart"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "concepts/memory-types",
+        "concepts/memory-lifecycle",
+        "concepts/multi-tenancy",
+        "concepts/temporal-versioning"
+      ]
+    },
+    {
+      "group": "SDKs",
+      "pages": [
+        "sdks/python",
+        "sdks/typescript"
+      ]
+    },
+    {
+      "group": "Integrations",
+      "pages": [
+        "integrations/langchain",
+        "integrations/crewai",
+        "integrations/openai-agents",
+        "integrations/anthropic-mcp"
+      ]
+    },
+    {
+      "group": "Self-Hosting",
+      "pages": [
+        "self-hosting/docker-compose",
+        "self-hosting/kubernetes",
+        "self-hosting/configuration"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/the-ai-project-co",
+    "twitter": "https://twitter.com/z3rno_dev"
+  }
+}

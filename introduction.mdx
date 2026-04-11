@@ -1,0 +1,40 @@
+---
+title: Introduction
+description: "The database for AI agent memory."
+---
+
+# Z3rno
+
+> **The database for AI agent memory.** Not a framework. Not a feature. Not a bolt-on. A purpose-built database that any agent framework can plug into.
+
+## What is Z3rno?
+
+Every AI agent needs persistent memory — to learn, personalise, and maintain context across sessions. Today, agent memory is fragmented across incompatible frameworks with zero compliance. Z3rno is the open-source, PostgreSQL-based memory database that any agent framework can plug into, with enterprise compliance built in from day one.
+
+## Why PostgreSQL?
+
+- **Trusted.** 35+ years of production use. Every enterprise already runs PostgreSQL.
+- **Unified.** Vector search (pgvector), graph relationships (Apache AGE), and temporal versioning (SCD Type 2) — all in one database, one query, one transaction.
+- **Compliant.** Row-Level Security, WAL-based point-in-time recovery, audit trails — compliance teams already approve PostgreSQL.
+- **Familiar.** Every DBA knows it. Zero new infrastructure to learn.
+
+## The four memory types
+
+Z3rno implements a biologically-inspired four-tier memory model:
+
+| Tier | Description | Example |
+|---|---|---|
+| **Working** | In-context information for the current task | "User just asked about pricing" |
+| **Episodic** | Conversation history, event sequences | "User had a detailed pricing chat on March 15" |
+| **Semantic** | Facts, preferences, learned knowledge | "User is on the Pro plan, price-sensitive" |
+| **Procedural** | Learned behaviours, workflow patterns | "When user asks about pricing, emphasise value over cost" |
+
+## Get started
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Install the SDK, connect to a self-hosted or managed Z3rno instance, and store your first memory in under 5 minutes.
+</Card>
+
+## License & status
+
+Z3rno is Apache 2.0 licensed. All source code lives at [github.com/the-ai-project-co](https://github.com/the-ai-project-co).
