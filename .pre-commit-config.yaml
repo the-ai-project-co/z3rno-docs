@@ -1,0 +1,55 @@
+# Pre-commit hooks for markdown-only repos (z3rno-docs, z3rno-process-docs)
+#
+# Install:
+#   pip install pre-commit  # or: brew install pre-commit
+#   pre-commit install
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Generic hygiene
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2000]  # docs repos can have larger images / SVGs
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: detect-private-key
+
+  # ---------------------------------------------------------------------------
+  # markdownlint-cli2 — linter for Markdown / MDX
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.14.0
+    hooks:
+      - id: markdownlint-cli2
+        args: [--config, .markdownlint-cli2.yaml]
+        # Don't fail in skeleton mode if config doesn't exist yet
+        files: \.(md|mdx)$
+
+  # ---------------------------------------------------------------------------
+  # commit message format (conventional commits)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.6.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, build, chore, ci, docs, perf, refactor, revert, style, test]
+
+ci:
+  autofix_prs: true
+  autoupdate_schedule: monthly

@@ -1,0 +1,40 @@
+# markdownlint-cli2 config — relaxed for technical docs
+#
+# Reference: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+config:
+  # MD013: line length — disabled (we wrap long URLs and code blocks naturally)
+  MD013: false
+
+  # MD033: inline HTML — allowed (Mintlify components, badges, callouts)
+  MD033: false
+
+  # MD041: first line must be top-level heading — disabled (frontmatter often comes first)
+  MD041: false
+
+  # MD024: duplicate headings — allowed if not siblings
+  MD024:
+    siblings_only: true
+
+  # MD025: single H1 — keep enforced
+  MD025: true
+
+  # MD034: bare URLs — allowed in technical docs
+  MD034: false
+
+  # MD036: emphasis as heading — disabled (we use **bold** for callouts)
+  MD036: false
+
+  # MD040: code block must specify language — relaxed (allow plain ```)
+  MD040: false
+
+  # MD046: code block style — fenced
+  MD046:
+    style: fenced
+
+ignores:
+  - "node_modules/"
+  - "dist/"
+  - "build/"
+  - ".github/"
+  - "CHANGELOG.md"
