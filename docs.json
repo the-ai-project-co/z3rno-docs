@@ -34,49 +34,51 @@
       "url": "https://discord.gg/z3rno"
     }
   ],
-  "navigation": [
-    {
-      "group": "Getting Started",
-      "pages": [
-        "introduction",
-        "quickstart",
-        "migration-guide"
-      ]
-    },
-    {
-      "group": "Core Concepts",
-      "pages": [
-        "concepts/memory-types",
-        "concepts/memory-lifecycle",
-        "concepts/multi-tenancy",
-        "concepts/temporal-versioning"
-      ]
-    },
-    {
-      "group": "SDKs",
-      "pages": [
-        "sdks/python",
-        "sdks/typescript"
-      ]
-    },
-    {
-      "group": "Integrations",
-      "pages": [
-        "integrations/langchain",
-        "integrations/crewai",
-        "integrations/openai-agents",
-        "integrations/anthropic-mcp"
-      ]
-    },
-    {
-      "group": "Self-Hosting",
-      "pages": [
-        "self-hosting/docker-compose",
-        "self-hosting/kubernetes",
-        "self-hosting/configuration"
-      ]
-    }
-  ],
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "migration-guide"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "concepts/memory-types",
+          "concepts/memory-lifecycle",
+          "concepts/multi-tenancy",
+          "concepts/temporal-versioning"
+        ]
+      },
+      {
+        "group": "SDKs",
+        "pages": [
+          "sdks/python",
+          "sdks/typescript"
+        ]
+      },
+      {
+        "group": "Integrations",
+        "pages": [
+          "integrations/langchain",
+          "integrations/crewai",
+          "integrations/openai-agents",
+          "integrations/anthropic-mcp"
+        ]
+      },
+      {
+        "group": "Self-Hosting",
+        "pages": [
+          "self-hosting/docker-compose",
+          "self-hosting/kubernetes",
+          "self-hosting/configuration"
+        ]
+      }
+    ]
+  },
   "footerSocials": {
     "github": "https://github.com/the-ai-project-co",
     "twitter": "https://twitter.com/z3rno_dev"
