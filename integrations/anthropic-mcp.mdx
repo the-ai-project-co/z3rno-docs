@@ -1,0 +1,38 @@
+---
+title: Anthropic MCP
+description: "Use Z3rno as a memory provider via the Model Context Protocol."
+---
+
+# Anthropic MCP Integration
+
+<Note>
+This integration guide is coming soon. Z3rno will provide a Memory Context Protocol (MCP) server for Claude and other MCP-compatible agents.
+</Note>
+
+## Quick Preview
+
+```typescript
+import { Z3rnoClient } from '@z3rno/sdk';
+
+const client = new Z3rnoClient({
+  baseUrl: 'http://localhost:8000',
+  apiKey: 'z3rno_sk_...',
+});
+
+// Store context from a Claude conversation
+await client.store({
+  agentId: 'claude-agent',
+  content: 'User is building a SaaS product for healthcare',
+  memoryType: 'semantic',
+  importance: 0.85,
+});
+
+// Recall relevant context
+const results = await client.recall({
+  agentId: 'claude-agent',
+  query: 'What is the user building?',
+  topK: 5,
+});
+```
+
+See the [TypeScript SDK guide](/sdks/typescript) for full API documentation.

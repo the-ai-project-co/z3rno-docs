@@ -1,0 +1,38 @@
+---
+title: LangChain
+description: "Use Z3rno as a memory backend for LangChain agents."
+---
+
+# LangChain Integration
+
+<Note>
+This integration guide is coming soon. Z3rno provides a custom `ChatMessageHistory` implementation for LangChain.
+</Note>
+
+## Quick Preview
+
+```python
+from z3rno import Z3rnoClient
+from langchain_core.chat_history import BaseChatMessageHistory
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_...",
+)
+
+# Store conversation messages as episodic memories
+client.store(
+    agent_id="langchain-agent",
+    content="User asked about pricing plans",
+    memory_type="episodic",
+)
+
+# Recall relevant context for the current conversation
+results = client.recall(
+    agent_id="langchain-agent",
+    query="What has the user asked about?",
+    top_k=5,
+)
+```
+
+See the [Python SDK guide](/sdks/python) for full API documentation.

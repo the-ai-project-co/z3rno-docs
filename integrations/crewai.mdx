@@ -1,0 +1,38 @@
+---
+title: CrewAI
+description: "Use Z3rno as shared memory for CrewAI multi-agent workflows."
+---
+
+# CrewAI Integration
+
+<Note>
+This integration guide is coming soon. Z3rno provides shared memory across CrewAI agents.
+</Note>
+
+## Quick Preview
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_...",
+)
+
+# Agent 1 stores a finding
+client.store(
+    agent_id="researcher",
+    content="Found 3 competitor products in the AI memory space",
+    memory_type="semantic",
+    metadata={"crew": "market-research"},
+)
+
+# Agent 2 recalls shared knowledge
+results = client.recall(
+    agent_id="analyst",
+    query="What competitors exist?",
+    top_k=10,
+)
+```
+
+See the [Python SDK guide](/sdks/python) for full API documentation.

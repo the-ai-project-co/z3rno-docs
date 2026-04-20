@@ -1,0 +1,38 @@
+---
+title: OpenAI Agents SDK
+description: "Use Z3rno as persistent memory for OpenAI Agents."
+---
+
+# OpenAI Agents SDK Integration
+
+<Note>
+This integration guide is coming soon. Z3rno can serve as the memory layer for agents built with the OpenAI Agents SDK.
+</Note>
+
+## Quick Preview
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_...",
+)
+
+# Store memory from an OpenAI agent's conversation
+client.store(
+    agent_id="openai-assistant",
+    content="User prefers concise responses and metric units",
+    memory_type="semantic",
+    importance=0.9,
+)
+
+# Recall before generating a response
+context = client.recall(
+    agent_id="openai-assistant",
+    query="What are the user's preferences?",
+    top_k=5,
+)
+```
+
+See the [Python SDK guide](/sdks/python) for full API documentation.
