@@ -61,7 +61,7 @@ results = client.recall(
 )
 
 for r in results:
-    print(f"{r.content} (relevance: {r.relevance_score:.2f})")
+    print(r.content, "(relevance:", round(r.relevance_score, 2), ")")
 ```
 
 ```typescript TypeScript

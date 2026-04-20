@@ -67,8 +67,8 @@ You can retrieve the complete version history of any memory:
 history = client.history(memory_id="mem_abc123")
 
 for version in history:
-    print(f"v{version.version}: {version.content}")
-    print(f"  Active: {version.valid_from} → {version.valid_to or 'current'}")
+    print("v" + str(version.version) + ":", version.content)
+    print("  Active:", version.valid_from, "→", version.valid_to or "current")
 ```
 
 Example output:

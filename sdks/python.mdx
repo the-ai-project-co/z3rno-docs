@@ -59,7 +59,7 @@ results = client.recall(
 )
 
 for r in results:
-    print(f"{r.content} (relevance: {r.relevance_score:.2f})")
+    print(r.content, "(relevance:", round(r.relevance_score, 2), ")")
 ```
 
 ### Recall with filters
@@ -136,7 +136,7 @@ events = client.audit(
 )
 
 for event in events:
-    print(f"{event.timestamp} | {event.event_type} | {event.memory_id}")
+    print(event.timestamp, "|", event.event_type, "|", event.memory_id)
 ```
 
 ### Version history
@@ -147,8 +147,8 @@ Retrieve the full version history of a specific memory.
 history = client.history(memory_id="mem_a1b2c3d4")
 
 for version in history:
-    print(f"v{version.version}: {version.content}")
-    print(f"  Active: {version.valid_from} → {version.valid_to or 'current'}")
+    print("v" + str(version.version) + ":", version.content)
+    print("  Active:", version.valid_from, "→", version.valid_to or "current")
 ```
 
 ## Session Management
@@ -192,10 +192,10 @@ except NotFoundError:
     print("Agent does not exist")
 except RateLimitError as e:
     # Rate limit exceeded
-    print(f"Rate limited. Retry after {e.retry_after} seconds")
+    print("Rate limited. Retry after", e.retry_after, "seconds")
 except Z3rnoError as e:
     # Any other Z3rno error
-    print(f"Z3rno error: {e.message} (code: {e.code})")
+    print("Z3rno error:", e.message, "(code:", e.code, ")")
 ```
 
 ### Exception hierarchy
