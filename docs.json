@@ -46,6 +46,21 @@
         ]
       },
       {
+        "group": "Architecture",
+        "pages": [
+          "architecture"
+        ]
+      },
+      {
+        "group": "Components",
+        "pages": [
+          "components/core",
+          "components/server",
+          "components/mcp",
+          "components/helm"
+        ]
+      },
+      {
         "group": "Core Concepts",
         "pages": [
           "core-concepts",
@@ -85,6 +100,12 @@
           "self-hosting/docker-compose",
           "self-hosting/kubernetes",
           "self-hosting/configuration"
+        ]
+      },
+      {
+        "group": "Performance",
+        "pages": [
+          "benchmarks"
         ]
       },
       {

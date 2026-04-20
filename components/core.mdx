@@ -1,0 +1,127 @@
+---
+title: "z3rno-core"
+description: "The shared library powering Z3rno's memory engine"
+---
+
+## Overview
+
+`z3rno-core` is a Python library that contains all business logic for Z3rno's memory system. It is imported directly by `z3rno-server` and is not deployed independently.
+
+```bash
+pip install z3rno-core  # internal package, not published to PyPI
+```
+
+## Modules
+
+### `engine`
+
+The orchestration layer that coordinates memory operations — store, recall, forget. Handles embedding generation, scoring, and result ranking.
+
+```python
+from z3rno_core.engine import MemoryEngine
+
+engine = MemoryEngine(db=pool, embedder=openai_embedder)
+result = await engine.store(agent_id="agent-1", content="User prefers dark mode")
+```
+
+### `models`
+
+Pydantic models for all domain objects — `Memory`, `RecallResult`, `AuditEntry`, `Tenant`. Shared between core and server for type safety.
+
+```python
+from z3rno_core.models import Memory, MemoryType
+
+memory = Memory(
+    content="Prefers Python over JS",
+    memory_type=MemoryType.SEMANTIC,
+    importance=0.8,
+)
+```
+
+### `graph`
+
+Apache AGE integration for relationship-based memory traversal. Manages edges between related memories (e.g., "contradicts", "elaborates", "supersedes").
+
+```python
+from z3rno_core.graph import GraphManager
+
+graph = GraphManager(db=pool)
+related = await graph.traverse(memory_id=mem.id, depth=2, relation="elaborates")
+```
+
+### `temporal`
+
+SCD Type 2 versioning logic. Handles `valid_from`/`valid_to` management, point-in-time queries, and version history retrieval.
+
+```python
+from z3rno_core.temporal import TemporalEngine
+
+temporal = TemporalEngine(db=pool)
+history = await temporal.get_versions(memory_id=mem.id)
+snapshot = await temporal.recall_as_of(query="prefs", timestamp=past_dt)
+```
+
+### `security`
+
+Multi-tenancy enforcement, API key validation, RLS context injection, and GDPR compliance utilities.
+
+```python
+from z3rno_core.security import TenantContext
+
+async with TenantContext(db=pool, tenant_id=tenant.id):
+    # All queries scoped to this tenant via RLS
+    memories = await engine.recall(agent_id="a1", query="hello")
+```
+
+## API Reference Summary
+
+| Function | Module | Description |
+|---|---|---|
+| `engine.store()` | engine | Embed and persist a memory |
+| `engine.recall()` | engine | Semantic search with filters |
+| `engine.forget()` | engine | Soft/hard delete memories |
+| `graph.link()` | graph | Create edge between memories |
+| `graph.traverse()` | graph | Walk relationships by depth |
+| `temporal.get_versions()` | temporal | List all versions of a memory |
+| `temporal.recall_as_of()` | temporal | Point-in-time recall |
+| `security.validate_key()` | security | Verify and resolve API key |
+| `security.gdpr_erase()` | security | Irrecoverable deletion |
+
+## Configuration
+
+`z3rno-core` is configured via a `CoreConfig` dataclass passed at initialization:
+
+```python
+from z3rno_core import CoreConfig, create_engine
+
+config = CoreConfig(
+    embedding_model="text-embedding-3-small",
+    embedding_dimensions=1536,
+    default_top_k=10,
+    importance_decay_rate=0.01,
+    hnsw_ef_search=64,
+)
+
+engine = create_engine(config=config, db=pool)
+```
+
+## Using as a Library
+
+If you want to embed Z3rno's memory logic into your own service (bypassing the HTTP layer):
+
+```python
+import asyncpg
+from z3rno_core import CoreConfig, create_engine
+
+pool = await asyncpg.create_pool(dsn="postgresql://...")
+engine = create_engine(config=CoreConfig(), db=pool)
+
+# Direct access to all memory operations
+await engine.store(agent_id="my-agent", content="Remember this")
+results = await engine.recall(agent_id="my-agent", query="what should I remember?")
+```
+
+<Warning>
+Using z3rno-core directly bypasses rate limiting, authentication, and audit logging
+provided by z3rno-server. Only use this approach for internal services.
+</Warning>

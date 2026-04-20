@@ -1,0 +1,161 @@
+---
+title: "z3rno-mcp"
+description: "MCP server for using Z3rno memory in Claude Desktop, Cursor, and other MCP clients"
+---
+
+## Overview
+
+`z3rno-mcp` is a Model Context Protocol (MCP) server that wraps the Z3rno Python SDK. It exposes four tools over stdio transport, allowing AI assistants like Claude Desktop and Cursor to store and recall memories directly.
+
+## Tools
+
+### `z3rno.store`
+
+Store a memory in Z3rno. Persists facts, preferences, decisions, or any information an agent should remember across conversations.
+
+```json
+{
+  "content": "User prefers dark mode and Python",
+  "agent_id": "claude-desktop",
+  "memory_type": "semantic",
+  "importance": 0.8,
+  "ttl_seconds": 86400
+}
+```
+
+### `z3rno.recall`
+
+Semantic search over stored memories. Returns ranked results with similarity scores.
+
+```json
+{
+  "query": "What are the user's preferences?",
+  "agent_id": "claude-desktop",
+  "top_k": 5,
+  "similarity_threshold": 0.7
+}
+```
+
+### `z3rno.forget`
+
+Delete memories. Supports soft delete (default) and GDPR-compliant hard delete for right-to-erasure requests.
+
+```json
+{
+  "memory_id": "550e8400-e29b-41d4-a716-446655440000",
+  "hard_delete": true,
+  "reason": "User requested data erasure"
+}
+```
+
+### `z3rno.audit`
+
+Query the audit log for compliance and debugging. Returns paginated operation history.
+
+```json
+{
+  "agent_id": "claude-desktop",
+  "operation": "store",
+  "page_size": 20
+}
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `Z3RNO_API_KEY` | Yes | — | Your Z3rno API key |
+| `Z3RNO_BASE_URL` | No | `https://api.z3rno.dev` | Server URL (override for self-hosted) |
+| `Z3RNO_AGENT_ID` | No | — | Default agent ID (avoids passing per-call) |
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_API_KEY": "z3_live_your_key_here",
+        "Z3RNO_AGENT_ID": "claude-desktop"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_API_KEY": "z3_live_your_key_here",
+        "Z3RNO_AGENT_ID": "cursor-agent"
+      }
+    }
+  }
+}
+```
+
+### Claude Code
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_API_KEY": "z3_live_your_key_here",
+        "Z3RNO_AGENT_ID": "claude-code"
+      }
+    }
+  }
+}
+```
+
+## Installation
+
+```bash
+# Run directly (no install needed)
+uvx z3rno-mcp
+
+# Or install globally
+pip install z3rno-mcp
+
+# Or from source
+git clone https://github.com/the-ai-project-co/z3rno-mcp
+cd z3rno-mcp
+uv sync
+uv run z3rno-mcp
+```
+
+## Self-Hosted Setup
+
+Point the MCP server at your own Z3rno instance:
+
+```bash
+export Z3RNO_BASE_URL=http://localhost:8000
+export Z3RNO_API_KEY=z3_test_local_dev_key
+export Z3RNO_AGENT_ID=my-agent
+uvx z3rno-mcp
+```
+
+## Troubleshooting
+
+- **"agent_id is required"** — Set `Z3RNO_AGENT_ID` env var or pass `agent_id` in every tool call
+- **Connection refused** — Verify `Z3RNO_BASE_URL` is reachable and the server is running
+- **401 Unauthorized** — Check that `Z3RNO_API_KEY` is valid and not expired

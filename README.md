@@ -33,6 +33,8 @@ mintlify dev
 # Site at http://localhost:3000
 ```
 
+For a detailed step-by-step setup (including troubleshooting), see [QUICKSTART.md](QUICKSTART.md).
+
 ## Contributing
 
 Docs PRs are very welcome. Small fixes can be submitted directly; larger restructures should open an issue first. See `CONTRIBUTING.md` (to be added in Week 6).

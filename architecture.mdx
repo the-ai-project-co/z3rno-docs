@@ -1,0 +1,113 @@
+---
+title: "Architecture Overview"
+description: "How Z3rno's multi-repo ecosystem fits together"
+---
+
+## System Diagram
+
+```
+┌──────────────┐     HTTP/REST     ┌──────────────────┐     SQL/pgvector     ┌─────────────────────────┐
+│  Python SDK  │──────────────────▶│                  │─────────────────────▶│   PostgreSQL 17         │
+│  TypeScript  │                   │   z3rno-server   │                      │  + pgvector (HNSW)      │
+│  MCP Server  │                   │   (FastAPI)      │◀─────────────────────│  + Apache AGE (graph)   │
+└──────────────┘                   │                  │     query results    │  + pg_cron (TTL/decay)  │
+                                   └──────────────────┘                      └─────────────────────────┘
+                                          │
+                                          │ imports
+                                          ▼
+                                   ┌──────────────────┐
+                                   │   z3rno-core     │
+                                   │   (library)      │
+                                   └──────────────────┘
+```
+
+## Multi-Repo Structure
+
+| Repository | Role | Language |
+|---|---|---|
+| `z3rno-core` | Shared library — engine, models, graph, temporal, security | Python |
+| `z3rno-server` | HTTP API service — imports z3rno-core, exposes REST endpoints | Python (FastAPI) |
+| `z3rno-sdk-python` | Client SDK for Python applications | Python |
+| `z3rno-sdk-typescript` | Client SDK for TypeScript/Node applications | TypeScript |
+| `z3rno-mcp` | MCP server wrapping the Python SDK for Claude/Cursor | Python |
+| `z3rno-helm` | Kubernetes Helm chart for production deployments | YAML |
+| `z3rno-docs` | This documentation site (Mintlify) | MDX |
+
+### Dependency Flow
+
+```
+z3rno-core        ← imported by z3rno-server (pip install)
+z3rno-server      ← called by SDKs over HTTP
+z3rno-sdk-python  ← wrapped by z3rno-mcp
+z3rno-helm        ← deploys z3rno-server + PostgreSQL on K8s
+```
+
+## Database Layer
+
+Z3rno uses **PostgreSQL 17** as its single data store, extended with:
+
+- **pgvector** — 1536-dimensional embeddings with HNSW indexing for fast ANN search
+- **Apache AGE** — Cypher-based graph queries for relationship traversal between memories
+- **pg_cron** — Background jobs for TTL expiration, importance decay, and maintenance
+
+### Schema Highlights
+
+```sql
+-- Memories table with vector column
+CREATE TABLE memories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    agent_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    embedding vector(1536),
+    memory_type TEXT DEFAULT 'episodic',
+    importance FLOAT DEFAULT 0.5,
+    valid_from TIMESTAMPTZ DEFAULT now(),
+    valid_to TIMESTAMPTZ DEFAULT 'infinity',
+    deleted_at TIMESTAMPTZ
+);
+
+-- HNSW index for sub-5ms recall at 100K scale
+CREATE INDEX idx_memories_hnsw ON memories
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 128);
+```
+
+## Key Design Decisions
+
+### Row-Level Security for Multi-Tenancy
+
+Every query is scoped to a `tenant_id` via PostgreSQL RLS policies. Tenants cannot access each other's data even with raw SQL access:
+
+```sql
+CREATE POLICY tenant_isolation ON memories
+  USING (tenant_id = current_setting('app.current_tenant')::uuid);
+```
+
+### HNSW for Vector Search
+
+Chosen over IVFFlat for its superior recall at low latency. No training step required — indexes update incrementally as memories are stored.
+
+### SCD Type 2 for Temporal Versioning
+
+Memories are never overwritten. Updates create new versions with `valid_from`/`valid_to` timestamps, enabling point-in-time recall:
+
+```python
+# Recall what the agent knew at a specific moment
+memories = client.recall(query="user preferences", as_of="2025-01-15T00:00:00Z")
+```
+
+### Soft Delete + GDPR Hard Delete
+
+Default deletion sets `deleted_at` (recoverable). GDPR erasure permanently removes data including embeddings and audit references.
+
+## Authentication Flow
+
+```
+Client → API Key in Authorization header
+     → Server validates key + resolves tenant_id
+     → RLS policy applied to all DB queries
+     → Response scoped to tenant
+```
+
+API keys are hashed (SHA-256) before storage. Each key maps to exactly one tenant.

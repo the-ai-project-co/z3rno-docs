@@ -1,0 +1,153 @@
+---
+title: "z3rno-helm"
+description: "Deploy Z3rno on Kubernetes with Helm"
+---
+
+## Overview
+
+`z3rno-helm` is a Helm chart that deploys the full Z3rno stack on Kubernetes: the API server, PostgreSQL with extensions, Redis, and Celery workers.
+
+```bash
+helm repo add z3rno https://charts.z3rno.dev
+helm repo update
+helm install z3rno z3rno/z3rno --namespace z3rno --create-namespace
+```
+
+## What Gets Deployed
+
+| Component | Default Replicas | Description |
+|---|---|---|
+| `z3rno-server` | 2 | FastAPI application (Deployment) |
+| `postgresql` | 1 | PostgreSQL 17 + pgvector + AGE + pg_cron (StatefulSet) |
+| `redis` | 1 | Celery broker + rate limit store (Deployment) |
+| `celery-worker` | 1 | Background task processor (Deployment) |
+| `celery-beat` | 1 | Periodic task scheduler (Deployment) |
+
+## Quick Start
+
+```bash
+# Minimal install with defaults
+helm install z3rno z3rno/z3rno \
+  --set server.env.Z3RNO_EMBEDDING_API_KEY=sk-your-openai-key
+
+# Production install with custom values
+helm install z3rno z3rno/z3rno -f values-production.yaml
+```
+
+## values.yaml Reference
+
+```yaml
+# Server configuration
+server:
+  replicas: 2
+  image:
+    repository: ghcr.io/the-ai-project-co/z3rno-server
+    tag: "latest"
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  env:
+    Z3RNO_EMBEDDING_MODEL: "text-embedding-3-small"
+    Z3RNO_RATE_LIMIT_DEFAULT: "300"
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPU: 70
+
+# PostgreSQL
+postgresql:
+  enabled: true            # Set false to use external DB
+  image:
+    repository: ghcr.io/the-ai-project-co/z3rno-postgres
+    tag: "17-pgvector"
+  storage: 50Gi
+  storageClass: ""         # Use cluster default
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: "2", memory: 4Gi }
+
+# External database (when postgresql.enabled=false)
+externalDatabase:
+  host: ""
+  port: 5432
+  name: "z3rno"
+  user: "z3rno"
+  existingSecret: ""       # Secret with key "password"
+
+# Redis
+redis:
+  enabled: true
+  storage: 1Gi
+
+# Celery workers
+celery:
+  worker:
+    replicas: 1
+    concurrency: 4
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+  beat:
+    enabled: true
+
+# Ingress
+ingress:
+  enabled: false
+  className: "nginx"
+  host: "api.z3rno.dev"
+  tls:
+    enabled: false
+    secretName: ""
+
+# Monitoring
+monitoring:
+  enabled: false
+  serviceMonitor: true     # Prometheus ServiceMonitor
+```
+
+## Using an External Database
+
+For production, you likely want a managed PostgreSQL instance (RDS, Cloud SQL, etc.):
+
+```yaml
+postgresql:
+  enabled: false
+
+externalDatabase:
+  host: "z3rno-db.abc123.us-east-1.rds.amazonaws.com"
+  port: 5432
+  name: "z3rno"
+  user: "z3rno"
+  existingSecret: "z3rno-db-credentials"
+```
+
+<Warning>
+Your external PostgreSQL must have pgvector, Apache AGE, and pg_cron extensions installed.
+Use the `ghcr.io/the-ai-project-co/z3rno-postgres:17-pgvector` image as a reference.
+</Warning>
+
+## Upgrading
+
+```bash
+helm repo update
+helm upgrade z3rno z3rno/z3rno --namespace z3rno -f values.yaml
+```
+
+Database migrations run automatically via an init container on the server pods.
+
+## Uninstalling
+
+```bash
+helm uninstall z3rno --namespace z3rno
+# PVCs are retained — manually delete if you want to remove data:
+kubectl delete pvc -l app.kubernetes.io/instance=z3rno -n z3rno
+```
+
+## Resource Recommendations
+
+| Scale | Server CPU | Server Mem | PG Storage | PG Mem |
+|---|---|---|---|---|
+| Dev/Test | 250m | 512Mi | 10Gi | 1Gi |
+| Small (< 100K memories) | 500m | 1Gi | 50Gi | 2Gi |
+| Medium (< 1M memories) | 1 | 2Gi | 200Gi | 8Gi |
+| Large (> 1M memories) | 2 | 4Gi | 500Gi+ | 16Gi+ |
