@@ -1,0 +1,207 @@
+---
+title: RAG Pipeline
+description: "Build retrieval-augmented generation with Z3rno as the memory layer."
+---
+
+# RAG Pipeline with Z3rno
+
+This guide shows how to build a retrieval-augmented generation (RAG) pipeline using Z3rno as the memory and retrieval layer. Unlike traditional RAG systems that use static vector databases, Z3rno provides a living memory that decays, transitions, and maintains temporal awareness.
+
+## Why Z3rno for RAG?
+
+Traditional vector databases store documents as static embeddings. Z3rno adds:
+
+- **Temporal awareness** -- query what was known at a specific point in time with `as_of`.
+- **Importance scoring** -- high-importance memories rank higher than low-importance ones, even if vector similarity is equal.
+- **Memory decay** -- outdated information naturally fades, keeping results fresh without manual pruning.
+- **Graph augmentation** -- traverse relationships between memories to surface contextually relevant information that pure vector search misses.
+- **Multi-tenancy** -- serve multiple users from a single deployment without data leakage.
+
+## Basic RAG Pattern
+
+```python
+from z3rno import Z3rnoClient
+from openai import OpenAI
+
+z3rno = Z3rnoClient(base_url="http://localhost:8000", api_key="z3rno_sk_...")
+oai = OpenAI()
+
+def rag_query(agent_id: str, question: str) -> str:
+    # Step 1: Retrieve relevant memories
+    response = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        top_k=10,
+        similarity_threshold=0.3,
+    )
+
+    # Step 2: Format context
+    context = "\n".join(
+        f"- [{r.memory_type}] {r.content}" for r in response.results
+    )
+
+    # Step 3: Generate answer with context
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Answer using this context:\n{context}"},
+            {"role": "user", "content": question},
+        ],
+    )
+    return completion.choices[0].message.content
+
+answer = rag_query("my-agent", "What are the user's communication preferences?")
+```
+
+## Multi-Type RAG
+
+Recall from different memory types to build richer context:
+
+```python
+def multi_type_rag(agent_id: str, question: str) -> str:
+    # Recall semantic facts (long-term knowledge)
+    facts = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        memory_type="semantic",
+        top_k=5,
+    )
+
+    # Recall recent episodes (interaction history)
+    episodes = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        memory_type="episodic",
+        top_k=5,
+    )
+
+    # Recall procedural knowledge (how to respond)
+    procedures = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        memory_type="procedural",
+        top_k=3,
+    )
+
+    context_parts = []
+    if facts.results:
+        context_parts.append("## Known Facts\n" + "\n".join(
+            f"- {r.content}" for r in facts.results
+        ))
+    if episodes.results:
+        context_parts.append("## Recent Interactions\n" + "\n".join(
+            f"- {r.content}" for r in episodes.results
+        ))
+    if procedures.results:
+        context_parts.append("## Response Guidelines\n" + "\n".join(
+            f"- {r.content}" for r in procedures.results
+        ))
+
+    context = "\n\n".join(context_parts)
+
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Use this context to answer:\n\n{context}"},
+            {"role": "user", "content": question},
+        ],
+    )
+    return completion.choices[0].message.content
+```
+
+## Graph-Augmented RAG
+
+Use graph traversal to find related memories that vector search alone would miss:
+
+```python
+def graph_augmented_rag(agent_id: str, question: str) -> str:
+    # Recall with graph traversal (2 hops from matched memories)
+    response = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        top_k=10,
+        graph_depth=2,
+    )
+
+    # Results now include directly matched memories AND
+    # memories connected via graph relationships
+    context = "\n".join(f"- {r.content}" for r in response.results)
+
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Context:\n{context}"},
+            {"role": "user", "content": question},
+        ],
+    )
+    return completion.choices[0].message.content
+```
+
+## Temporal RAG
+
+Query what an agent knew at a specific point in time -- useful for auditing and debugging:
+
+```python
+def temporal_rag(agent_id: str, question: str, as_of: str) -> str:
+    """Answer a question based on what was known at a specific time."""
+    response = z3rno.recall(
+        agent_id=agent_id,
+        query=question,
+        top_k=10,
+        as_of=as_of,
+    )
+
+    context = "\n".join(f"- {r.content}" for r in response.results)
+
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Based on what was known as of {as_of}:\n{context}"},
+            {"role": "user", "content": question},
+        ],
+    )
+    return completion.choices[0].message.content
+
+# What would the agent have answered on March 15?
+answer = temporal_rag("my-agent", "What plan is the user on?", "2026-03-15T12:00:00Z")
+```
+
+## Store-After-Generate Pattern
+
+After generating a response, store the interaction as memory so future queries benefit from it:
+
+```python
+def rag_with_feedback_loop(agent_id: str, question: str) -> str:
+    # Recall and generate
+    response = z3rno.recall(agent_id=agent_id, query=question, top_k=10)
+    context = "\n".join(f"- {r.content}" for r in response.results)
+
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": f"Context:\n{context}"},
+            {"role": "user", "content": question},
+        ],
+    )
+    answer = completion.choices[0].message.content
+
+    # Store the interaction as episodic memory
+    z3rno.store(
+        agent_id=agent_id,
+        content=f"User asked: {question}\nAgent answered: {answer}",
+        memory_type="episodic",
+        metadata={"type": "qa_interaction"},
+    )
+
+    return answer
+```
+
+## With LangChain
+
+See the [LangChain integration guide](/integrations/langchain) for using `Z3rnoRetriever` in LangChain RAG chains.
+
+## Next Steps
+
+- [Memory Architectures](/guides/memory-architectures) for consolidation patterns
+- [Multi-Agent Memory](/guides/multi-agent-memory) for sharing knowledge across agents
+- [Temporal Versioning](/concepts/temporal-versioning) for point-in-time query details

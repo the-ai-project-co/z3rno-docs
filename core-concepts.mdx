@@ -1,0 +1,198 @@
+---
+title: Core Concepts
+description: "An overview of Z3rno's memory model, lifecycle, temporal versioning, graph relationships, and multi-tenancy."
+---
+
+# Core Concepts
+
+This page provides a high-level overview of the foundational concepts in Z3rno. Each section links to a detailed deep-dive page.
+
+## Memory Types
+
+Z3rno implements a biologically-inspired four-tier memory model. Each tier maps to a different kind of knowledge an agent needs to retain.
+
+### Working Memory
+
+Active context for the current task. Think of it as the agent's scratchpad.
+
+**Real-world example:** A customer support agent is midway through a conversation. Working memory holds "the user just provided their order number (ORD-4821) and is asking for a refund." This context is needed right now but will not matter next week.
+
+### Episodic Memory
+
+Events and interactions that happened in the past. The agent's autobiographical history.
+
+**Real-world example:** "On March 15, the user had a 20-minute conversation about upgrading their plan. They compared Pro vs Enterprise and ultimately decided to stay on Pro." This gives the agent temporal context -- it knows what happened and when.
+
+### Semantic Memory
+
+Facts, preferences, and learned knowledge. The agent's long-term knowledge base.
+
+**Real-world example:** "The user's name is Alex. They work at Acme Corp. They prefer metric units and dark mode. Their account is on the Pro plan." These facts persist indefinitely and are recalled whenever relevant.
+
+### Procedural Memory
+
+Learned behaviours, patterns, and decision rules. The agent's muscle memory.
+
+**Real-world example:** "When a user asks about pricing, start with the value proposition before showing numbers. When a user is frustrated, acknowledge their frustration before offering solutions." These are behavioural patterns the agent has learned work well.
+
+For a complete reference, see [Memory Types](/concepts/memory-types).
+
+---
+
+## Memory Lifecycle
+
+Memories are not static. They move through a lifecycle of scoring, decay, transition, and deletion.
+
+```
+Store → Score → Active → Decay → Transition → Forget
+  |                |                    |            |
+  |   importance   |    relevance       |   promote  |   soft/hard
+  |   calculated   |    decreases       |   to next  |   delete
+  v                v    over time       v   tier     v
+```
+
+**Stage 1: Store.** A memory is created via the API with content, type, and optional metadata.
+
+**Stage 2: Score.** An importance score (0.0-1.0) is calculated automatically based on content analysis, or set explicitly by the caller.
+
+**Stage 3: Active.** The memory is available for recall. Each time it is recalled, its access count increments and recency is refreshed.
+
+**Stage 4: Decay.** Over time, the memory's effective importance decreases according to its decay curve (exponential, logarithmic, or step). Memories that are recalled frequently decay more slowly.
+
+**Stage 5: Transition.** Memories can be promoted between tiers: working memories consolidate into episodic memories when a session ends. Repeated episodic patterns are promoted to semantic memory. Learned behaviours extracted from episodes become procedural memories.
+
+**Stage 6: Forget.** Memories that fall below importance thresholds are soft-deleted (hidden from recall but retained for audit) or hard-deleted (permanently purged for GDPR compliance).
+
+For the complete lifecycle reference, see [Memory Lifecycle](/concepts/memory-lifecycle).
+
+---
+
+## Temporal Versioning
+
+Z3rno never overwrites a memory. Every update creates a new version while preserving the old one. This is implemented using the **Slowly Changing Dimension Type 2 (SCD Type 2)** pattern from data warehousing.
+
+### Why it matters
+
+- **Point-in-time queries:** Ask "what did the agent know on March 15?" and get an exact answer.
+- **Audit trails:** See the full mutation history of any memory for compliance and debugging.
+- **Rollback:** Revert to a previous version if an update was incorrect.
+- **Debugging:** Understand why an agent behaved a certain way at a specific moment.
+
+### How to query
+
+```python
+# Point-in-time: what did the agent know on March 15?
+results = client.recall(
+    agent_id="agent-1",
+    query="user preferences",
+    as_of="2026-03-15T12:00:00Z",
+)
+
+# Full version history of a specific memory
+history = client.history(memory_id="mem_abc123")
+for version in history:
+    print(f"v{version.version}: {version.content}")
+    print(f"  Active: {version.valid_from} -> {version.valid_to or 'current'}")
+```
+
+Every memory row has `valid_from` and `valid_to` timestamps. The current version has `valid_to = NULL`. When a memory is updated, a PostgreSQL trigger atomically closes the old version and creates the new one.
+
+For the complete reference, see [Temporal Versioning](/concepts/temporal-versioning).
+
+---
+
+## Graph Relationships
+
+Memories do not exist in isolation. Z3rno uses Apache AGE (a PostgreSQL graph extension) to model relationships between memories, enabling graph-augmented recall.
+
+### Relationship Types
+
+| Relationship | Direction | Example |
+|---|---|---|
+| `RELATES_TO` | Bidirectional | "User preference for dark mode" relates to "UI settings conversation" |
+| `CAUSED_BY` | Directed | "User upgraded plan" was caused by "pricing conversation on March 15" |
+| `FOLLOWS` | Directed | Episode B follows Episode A in a sequence |
+| `CONTRADICTS` | Bidirectional | "User prefers dark mode" contradicts "User prefers light mode" |
+| `SUPPORTS` | Directed | Multiple episodic memories support a semantic conclusion |
+| `DERIVED_FROM` | Directed | A semantic memory was derived from several episodic memories |
+
+### Graph-Augmented Recall
+
+When you recall memories, Z3rno can traverse the graph to find related memories that are not directly matched by the query but are contextually relevant.
+
+```python
+response = client.recall(
+    agent_id="agent-1",
+    query="user preferences",
+    graph_depth=2,  # Traverse up to 2 hops from matched memories
+)
+```
+
+With `graph_depth=2`, Z3rno first finds memories matching the query via vector similarity, then traverses their graph relationships up to 2 hops to include connected memories in the results. This surfaces contextually relevant information that a pure vector search would miss.
+
+### Traversal Depth
+
+| Depth | Behaviour |
+|---|---|
+| `0` | No graph traversal (vector search only) |
+| `1` | Include directly connected memories |
+| `2` | Include memories connected through one intermediate node |
+| `3+` | Deeper traversal (diminishing returns, higher latency) |
+
+The default depth is `1`. Increasing depth broadens the recall context but adds latency (approximately 2-5ms per additional hop).
+
+---
+
+## Multi-Tenancy
+
+Z3rno isolates data across organisations using PostgreSQL Row-Level Security (RLS). This is not application-level filtering -- it is database-enforced isolation that no application bug can bypass.
+
+### How it works
+
+1. Every API key is permanently bound to an `org_id`.
+2. On each request, the server sets a PostgreSQL session variable: `SET app.current_org_id = '<org_id>'`.
+3. RLS policies on every table filter rows to `WHERE org_id = current_setting('app.current_org_id')`.
+4. Result: Organisation A can never see, search, or access Organisation B's data. Period.
+
+### Transparent to developers
+
+As a developer using the SDK, you do not need to do anything special. Your API key determines your org scope automatically. Every store, recall, and forget operation is implicitly scoped to your organisation.
+
+```python
+# No org_id needed in the SDK -- it is derived from your API key
+client = Z3rnoClient(
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_prod_acme_corp_key",  # Bound to Acme Corp's org_id
+)
+
+# This memory is automatically isolated to Acme Corp
+client.store(agent_id="agent-1", content="...", memory_type="semantic")
+```
+
+### Isolation guarantees
+
+- Vector similarity searches never return cross-tenant results, even for semantically identical content.
+- Graph traversals are scoped to the org's subgraph. Cross-org edges are structurally impossible.
+- Audit logs are scoped per organisation.
+- Hard deletes only cascade through the requesting org's data.
+
+For the complete reference, see [Multi-Tenancy](/concepts/multi-tenancy).
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Memory Types" icon="layer-group" href="/concepts/memory-types">
+    Deep dive into all four memory types with storage details and code examples.
+  </Card>
+  <Card title="Memory Lifecycle" icon="arrows-spin" href="/concepts/memory-lifecycle">
+    Importance scoring, decay curves, TTL enforcement, and transitions.
+  </Card>
+  <Card title="Temporal Versioning" icon="clock-rotate-left" href="/concepts/temporal-versioning">
+    SCD Type 2, point-in-time queries, and version history.
+  </Card>
+  <Card title="Multi-Tenancy" icon="shield-halved" href="/concepts/multi-tenancy">
+    RLS isolation, API key binding, and zero-leakage guarantees.
+  </Card>
+</CardGroup>

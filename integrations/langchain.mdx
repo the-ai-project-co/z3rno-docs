@@ -1,38 +1,151 @@
 ---
 title: LangChain
-description: "Use Z3rno as a memory backend for LangChain agents."
+description: "Use Z3rno as a memory backend for LangChain agents with chat history and RAG retrieval."
 ---
 
 # LangChain Integration
 
-<Note>
-This integration guide is coming soon. Z3rno provides a custom `ChatMessageHistory` implementation for LangChain.
-</Note>
+Z3rno provides two LangChain adapters: `Z3rnoChatMessageHistory` for conversation memory and `Z3rnoRetriever` for RAG retrieval.
 
-## Quick Preview
+## Installation
+
+```bash
+pip install z3rno[langchain]
+```
+
+This installs the Z3rno SDK along with `langchain-core` as a dependency.
+
+## Setup
 
 ```python
 from z3rno import Z3rnoClient
-from langchain_core.chat_history import BaseChatMessageHistory
+from z3rno.integrations.langchain import Z3rnoChatMessageHistory, Z3rnoRetriever
 
 client = Z3rnoClient(
     base_url="http://localhost:8000",
     api_key="z3rno_sk_...",
 )
+```
 
-# Store conversation messages as episodic memories
-client.store(
+## Chat Message History
+
+Use `Z3rnoChatMessageHistory` as a drop-in replacement for any LangChain chat history backend. Messages are stored as episodic memories in Z3rno.
+
+```python
+from z3rno.integrations.langchain import Z3rnoChatMessageHistory
+
+history = Z3rnoChatMessageHistory(
+    client=client,
     agent_id="langchain-agent",
-    content="User asked about pricing plans",
-    memory_type="episodic",
+    session_id="session-abc",  # Optional: scope to a session
+    top_k=50,                  # Max messages to retrieve
 )
 
-# Recall relevant context for the current conversation
-results = client.recall(
-    agent_id="langchain-agent",
-    query="What has the user asked about?",
-    top_k=5,
+# Add messages
+history.add_user_message("What is Z3rno?")
+history.add_ai_message("Z3rno is a memory database for AI agents.")
+
+# Retrieve stored messages
+for msg in history.messages:
+    print(f"{msg.type}: {msg.content}")
+
+# Clear all history for this agent
+history.clear()
+```
+
+### With RunnableWithMessageHistory
+
+```python
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o")
+
+def get_session_history(session_id: str):
+    return Z3rnoChatMessageHistory(
+        client=client,
+        agent_id="langchain-agent",
+        session_id=session_id,
+    )
+
+chain_with_history = RunnableWithMessageHistory(
+    llm,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="history",
+)
+
+response = chain_with_history.invoke(
+    {"input": "Remember that I prefer Python over JavaScript."},
+    config={"configurable": {"session_id": "user-123"}},
 )
 ```
 
-See the [Python SDK guide](/sdks/python) for full API documentation.
+## RAG Retriever
+
+Use `Z3rnoRetriever` to search agent memories by semantic similarity and feed results into a RAG chain.
+
+```python
+from z3rno.integrations.langchain import Z3rnoRetriever
+
+retriever = Z3rnoRetriever(
+    client=client,
+    agent_id="langchain-agent",
+    top_k=10,
+    memory_type="semantic",          # Optional: filter by type
+    similarity_threshold=0.5,        # Minimum similarity score
+)
+
+# Use as a standalone retriever
+docs = retriever.invoke("user preferences")
+for doc in docs:
+    print(f"{doc.page_content} (score: {doc.metadata['similarity_score']:.2f})")
+```
+
+### In a RAG chain
+
+```python
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer using the following context:\n{context}"),
+    ("human", "{question}"),
+])
+
+llm = ChatOpenAI(model="gpt-4o")
+
+def format_docs(docs):
+    return "\n".join(doc.page_content for doc in docs)
+
+rag_chain = (
+    {"context": retriever | format_docs, "question": lambda x: x}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+answer = rag_chain.invoke("What are the user's preferences?")
+print(answer)
+```
+
+## Document Metadata
+
+Each document returned by `Z3rnoRetriever` includes rich metadata:
+
+| Field | Description |
+|---|---|
+| `memory_id` | Unique identifier for the memory |
+| `memory_type` | working, episodic, semantic, or procedural |
+| `similarity_score` | Vector similarity to the query (0.0-1.0) |
+| `importance_score` | Memory importance (0.0-1.0) |
+| `relevance_score` | Composite relevance score |
+| `recall_count` | Number of times this memory has been recalled |
+| `created_at` | ISO timestamp of creation |
+
+## Next Steps
+
+- [Python SDK Reference](/sdks/python) for all available parameters
+- [RAG Pipeline Guide](/guides/rag-pipeline) for advanced RAG patterns with Z3rno
+- [Memory Types](/concepts/memory-types) to understand which type to use

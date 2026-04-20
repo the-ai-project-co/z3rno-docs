@@ -1,0 +1,158 @@
+---
+title: Getting Started
+description: "Install Z3rno and store your first memory in under 5 minutes."
+---
+
+# Getting Started
+
+## What is Z3rno?
+
+Z3rno is an open-source, PostgreSQL-based memory database purpose-built for AI agents. It gives your agents persistent, structured memory -- the ability to store facts, recall context, track conversation history, and learn patterns across sessions -- all with enterprise-grade multi-tenancy, GDPR-compliant deletion, and temporal versioning built in. Instead of bolting memory onto your agent framework with ad-hoc solutions, Z3rno provides a single, framework-agnostic memory layer that any agent can plug into.
+
+## Install the SDK
+
+<CodeGroup>
+
+```bash Python
+pip install z3rno
+```
+
+```bash TypeScript
+npm install @z3rno/sdk
+```
+
+</CodeGroup>
+
+## 5-Minute Quickstart
+
+This walkthrough takes you from zero to working agent memory in four steps: connect, store, recall, done.
+
+### Step 1: Connect
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",      # or https://api.z3rno.dev
+    api_key="z3rno_sk_test_localdev",
+)
+```
+
+If you do not have a running Z3rno server yet, see [Self-Hosting with Docker Compose](/self-hosting/docker-compose) to spin one up locally.
+
+### Step 2: Store a memory
+
+```python
+memory = client.store(
+    agent_id="my-agent",
+    content="User prefers dark mode and uses Python 3.12.",
+    memory_type="semantic",
+)
+print(f"Stored memory: {memory.id}")
+```
+
+The `memory_type` parameter tells Z3rno how to categorize and manage this memory. Use `semantic` for facts, `episodic` for events, `working` for active context, and `procedural` for learned behaviours.
+
+### Step 3: Recall memories
+
+```python
+response = client.recall(
+    agent_id="my-agent",
+    query="What does the user prefer?",
+    top_k=5,
+)
+
+for r in response.results:
+    print(f"{r.content} (relevance: {r.relevance_score:.2f})")
+```
+
+Z3rno uses vector similarity search to find the most relevant memories for your query. Results are ranked by a composite relevance score that factors in semantic similarity, recency, and importance.
+
+### Step 4: Done
+
+That is all it takes. Your agent now has persistent memory that survives across sessions, supports natural-language recall, and scales to millions of memories per agent.
+
+### Full example
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_test_localdev",
+)
+
+# Store some facts about the user
+client.store(
+    agent_id="my-agent",
+    content="User's name is Alex and they work at Acme Corp.",
+    memory_type="semantic",
+    importance=0.9,
+)
+
+client.store(
+    agent_id="my-agent",
+    content="User prefers concise responses in bullet-point format.",
+    memory_type="semantic",
+    importance=0.85,
+)
+
+# Store a conversation event
+client.store(
+    agent_id="my-agent",
+    content="User asked about pricing for the Enterprise plan on April 20.",
+    memory_type="episodic",
+)
+
+# Recall relevant context before responding
+response = client.recall(
+    agent_id="my-agent",
+    query="What do I know about this user?",
+    top_k=10,
+)
+
+for r in response.results:
+    print(f"  [{r.memory_type}] {r.content}")
+```
+
+## Architecture Overview
+
+Z3rno follows a simple three-layer architecture:
+
+```
+Your Agent / Framework
+        |
+        v
+   Z3rno SDK  (thin HTTP client — no DB deps, no embedding logic)
+        |
+        v
+   Z3rno Server  (FastAPI — handles auth, embedding, scoring, lifecycle)
+        |
+        v
+   PostgreSQL  (pgvector + Apache AGE + SCD Type 2 temporal tables)
+```
+
+**SDK layer.** The Python and TypeScript SDKs are thin HTTP clients that send requests to the Z3rno server. They contain zero database dependencies, zero embedding logic, and zero business rules. All intelligence is server-side.
+
+**Server layer.** The Z3rno server is a FastAPI application that handles authentication (API key to org mapping), embedding generation (converting text to vectors), importance scoring, memory lifecycle management (decay, transitions, TTL enforcement), and multi-tenant isolation.
+
+**Database layer.** All data lives in PostgreSQL. Vector similarity search is powered by pgvector. Graph relationships between memories use Apache AGE. Temporal versioning uses the SCD Type 2 pattern with database triggers. Row-Level Security (RLS) enforces multi-tenant isolation at the database level.
+
+This architecture means you can swap or upgrade any layer independently. The SDK talks HTTP, so you can use any language. The server is stateless, so you can scale horizontally. The database is PostgreSQL, so your ops team already knows how to run it.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="brain" href="/core-concepts">
+    Understand memory types, lifecycle, temporal versioning, and graph relationships.
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Full API reference for the Python SDK.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/integrations/langchain">
+    Drop Z3rno into LangChain, CrewAI, OpenAI Agents, or Claude via MCP.
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/self-hosting/docker-compose">
+    Run Z3rno locally with Docker Compose.
+  </Card>
+</CardGroup>

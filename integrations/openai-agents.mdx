@@ -1,38 +1,173 @@
 ---
 title: OpenAI Agents SDK
-description: "Use Z3rno as persistent memory for OpenAI Agents."
+description: "Add persistent memory to OpenAI agents using Z3rno function tools."
 ---
 
 # OpenAI Agents SDK Integration
 
-<Note>
-This integration guide is coming soon. Z3rno can serve as the memory layer for agents built with the OpenAI Agents SDK.
-</Note>
+Z3rno provides memory as OpenAI-compatible function tools. Your agent can store, recall, and forget memories through standard tool-calling -- no custom wiring required.
 
-## Quick Preview
+## Installation
+
+```bash
+pip install z3rno
+pip install openai
+```
+
+## Setup
 
 ```python
 from z3rno import Z3rnoClient
+from z3rno.integrations.openai_agents import get_memory_tools, handle_tool_call
 
 client = Z3rnoClient(
     base_url="http://localhost:8000",
     api_key="z3rno_sk_...",
 )
 
-# Store memory from an OpenAI agent's conversation
-client.store(
-    agent_id="openai-assistant",
-    content="User prefers concise responses and metric units",
-    memory_type="semantic",
-    importance=0.9,
-)
-
-# Recall before generating a response
-context = client.recall(
-    agent_id="openai-assistant",
-    query="What are the user's preferences?",
-    top_k=5,
-)
+# Get tool definitions to pass to OpenAI
+tools = get_memory_tools()
 ```
 
-See the [Python SDK guide](/sdks/python) for full API documentation.
+## Tool Definitions
+
+`get_memory_tools()` returns three function tool definitions:
+
+| Tool | Description |
+|---|---|
+| `store_memory` | Persist information to long-term memory |
+| `recall_memory` | Retrieve relevant memories by semantic search |
+| `forget_memory` | Remove outdated or incorrect memories |
+
+These are standard OpenAI function-calling tool definitions that you pass directly to the API.
+
+## Basic Usage with Chat Completions
+
+```python
+import openai
+
+oai = openai.OpenAI()
+
+messages = [
+    {"role": "system", "content": "You have access to persistent memory. Use store_memory to save important facts and recall_memory to retrieve them."},
+    {"role": "user", "content": "My name is Alex and I work at Acme Corp. Remember that."},
+]
+
+response = oai.chat.completions.create(
+    model="gpt-4o",
+    messages=messages,
+    tools=tools,
+)
+
+# Handle tool calls
+for tool_call in response.choices[0].message.tool_calls or []:
+    result = handle_tool_call(
+        client,
+        agent_id="openai-agent",
+        tool_name=tool_call.function.name,
+        arguments=tool_call.function.arguments,
+    )
+    # Append the tool result back to the conversation
+    messages.append(response.choices[0].message)
+    messages.append({
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "content": result,
+    })
+
+# Continue the conversation with the tool results
+final_response = oai.chat.completions.create(
+    model="gpt-4o",
+    messages=messages,
+    tools=tools,
+)
+print(final_response.choices[0].message.content)
+```
+
+## Automatic Conversation Memory
+
+For agents that should automatically store every message without explicit tool calls, use `Z3rnoConversationMemory`:
+
+```python
+from z3rno.integrations.openai_agents import Z3rnoConversationMemory
+
+conv = Z3rnoConversationMemory(
+    client,
+    agent_id="openai-agent",
+    user_id="user-123",       # Optional: scope to a user
+    auto_store=True,          # Automatically store every message
+)
+
+# Add messages as the conversation progresses
+conv.add_message(role="user", content="I prefer dark mode and concise answers.")
+conv.add_message(role="assistant", content="Got it! I'll keep responses brief.")
+
+# Before generating the next response, retrieve relevant context
+context = conv.get_context(
+    query="What are the user's display preferences?",
+    top_k=5,
+)
+for item in context:
+    print(f"  [{item['role']}] {item['content']} (score: {item['similarity_score']:.2f})")
+```
+
+## Agent Loop Pattern
+
+A complete agent loop that uses memory tools:
+
+```python
+import json
+import openai
+from z3rno import Z3rnoClient
+from z3rno.integrations.openai_agents import get_memory_tools, handle_tool_call
+
+client = Z3rnoClient(base_url="http://localhost:8000", api_key="z3rno_sk_...")
+oai = openai.OpenAI()
+tools = get_memory_tools()
+
+SYSTEM_PROMPT = """You are a helpful assistant with persistent memory.
+- Use store_memory to remember important user facts and preferences.
+- Use recall_memory at the start of conversations to retrieve relevant context.
+- Use forget_memory to remove outdated information."""
+
+def run_agent(user_message: str, agent_id: str = "openai-agent"):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message},
+    ]
+
+    while True:
+        response = oai.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            tools=tools,
+        )
+        msg = response.choices[0].message
+
+        if not msg.tool_calls:
+            return msg.content
+
+        messages.append(msg)
+        for tc in msg.tool_calls:
+            result = handle_tool_call(
+                client,
+                agent_id=agent_id,
+                tool_name=tc.function.name,
+                arguments=tc.function.arguments,
+            )
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+# Usage
+print(run_agent("My favorite language is Python. Remember that."))
+print(run_agent("What's my favorite programming language?"))
+```
+
+## Next Steps
+
+- [Python SDK Reference](/sdks/python) for all available parameters
+- [Multi-Agent Memory Guide](/guides/multi-agent-memory) for sharing memory across agents
+- [Memory Lifecycle](/concepts/memory-lifecycle) to understand decay and transitions

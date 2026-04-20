@@ -40,6 +40,7 @@
         "group": "Getting Started",
         "pages": [
           "introduction",
+          "getting-started",
           "quickstart",
           "migration-guide"
         ]
@@ -47,6 +48,7 @@
       {
         "group": "Core Concepts",
         "pages": [
+          "core-concepts",
           "concepts/memory-types",
           "concepts/memory-lifecycle",
           "concepts/multi-tenancy",
@@ -70,11 +72,25 @@
         ]
       },
       {
+        "group": "Guides",
+        "pages": [
+          "guides/rag-pipeline",
+          "guides/multi-agent-memory",
+          "guides/memory-architectures"
+        ]
+      },
+      {
         "group": "Self-Hosting",
         "pages": [
           "self-hosting/docker-compose",
           "self-hosting/kubernetes",
           "self-hosting/configuration"
+        ]
+      },
+      {
+        "group": "Support",
+        "pages": [
+          "troubleshooting"
         ]
       }
     ]

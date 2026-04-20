@@ -1,0 +1,199 @@
+---
+title: Troubleshooting & FAQ
+description: "Common issues, error resolution, and frequently asked questions about Z3rno."
+---
+
+# Troubleshooting & FAQ
+
+## Common Issues
+
+### Empty recall results
+
+**Symptom:** `client.recall()` returns zero results even though you have stored memories.
+
+**Possible causes and fixes:**
+
+1. **Wrong agent_id.** Memories are scoped by agent. Make sure the `agent_id` used in `recall()` matches what was used in `store()`.
+
+```python
+# These are different memory spaces
+client.store(agent_id="agent-1", content="...", memory_type="semantic")
+client.recall(agent_id="agent-2", query="...")  # Returns nothing!
+```
+
+2. **Memory type filter mismatch.** If you pass `memory_type` in recall, it only returns memories of that type.
+
+```python
+client.store(agent_id="agent-1", content="...", memory_type="episodic")
+client.recall(agent_id="agent-1", query="...", memory_type="semantic")  # No match
+```
+
+3. **Similarity threshold too high.** Lower the `similarity_threshold` or remove it entirely.
+
+```python
+# Try without threshold first
+results = client.recall(agent_id="agent-1", query="test", similarity_threshold=0.0)
+```
+
+4. **Memory has decayed or expired.** Check if the memory's TTL has passed or if its importance score has decayed below the threshold.
+
+5. **Session-scoped working memory was evicted.** Working memories are deleted when the session ends. Use episodic or semantic type for persistent storage.
+
+---
+
+### Authentication errors (401)
+
+**Symptom:** `AuthenticationError: Invalid or expired API key`
+
+**Fixes:**
+
+1. Verify the API key is correct and has not been revoked.
+2. Ensure the key starts with the expected prefix (`z3rno_sk_`).
+3. Check that you are connecting to the correct server (production key against production server, not localhost).
+4. API keys are bound to a specific organisation. If the org was deleted, the key is invalid.
+
+```python
+# Verify your connection
+try:
+    client.recall(agent_id="test", query="ping")
+except AuthenticationError:
+    print("API key is invalid. Check your key and server URL.")
+```
+
+---
+
+### Connection refused
+
+**Symptom:** `ConnectionError: Failed to connect to http://localhost:8000`
+
+**Fixes:**
+
+1. **Server not running.** Start the Z3rno server:
+   ```bash
+   cd z3rno-server && docker compose -f docker-compose.dev.yml up
+   ```
+
+2. **Wrong port.** The default port is 8000. Check your Docker configuration.
+
+3. **Docker networking.** If your client runs inside Docker, use the container name or `host.docker.internal` instead of `localhost`.
+
+4. **Firewall.** Ensure port 8000 is not blocked by your firewall or VPN.
+
+---
+
+### Rate limit errors (429)
+
+**Symptom:** `RateLimitError: Rate limit exceeded. Retry after N seconds.`
+
+**Fixes:**
+
+1. **Respect the retry-after header.** The SDK includes automatic retry with backoff, but if you exceed limits persistently, slow down your request rate.
+
+```python
+from z3rno import RateLimitError
+
+try:
+    results = client.recall(agent_id="agent-1", query="test")
+except RateLimitError as e:
+    print(f"Rate limited. Retry after {e.retry_after} seconds.")
+```
+
+2. **Batch operations.** Instead of storing memories one at a time in a tight loop, batch them or add small delays.
+
+3. **Increase your rate limit.** Contact support or upgrade your plan for higher limits.
+
+---
+
+### Slow recall performance
+
+**Symptom:** Recall queries take longer than expected (over 100ms).
+
+**Fixes:**
+
+1. **Reduce `top_k`.** Smaller result sets are faster. Use 5-10 for most use cases, not 100.
+2. **Add a `memory_type` filter.** Filtering by type reduces the search space significantly.
+3. **Lower `graph_depth`.** Each hop adds 2-5ms. Use 0 or 1 for latency-sensitive paths.
+4. **Check your PostgreSQL resources.** Ensure adequate RAM for pgvector indexes (recommend at least 4GB for production workloads).
+
+---
+
+### Version conflicts (409)
+
+**Symptom:** `ConflictError: Version conflict on memory mem_abc123`
+
+**Cause:** Two concurrent updates tried to modify the same memory simultaneously.
+
+**Fix:** Retry the operation. The SDK's built-in retry logic handles this automatically for up to 3 attempts. If conflicts are frequent, consider restructuring your code to avoid concurrent writes to the same memory.
+
+---
+
+## Frequently Asked Questions
+
+### 1. What databases does Z3rno require?
+
+Z3rno requires **PostgreSQL 15+** with the following extensions:
+- **pgvector** for vector similarity search
+- **Apache AGE** for graph relationships
+- **Standard PostgreSQL** for temporal versioning (SCD Type 2)
+
+Redis is used optionally for working memory caching but is not strictly required.
+
+### 2. Can I use Z3rno without self-hosting?
+
+Yes. Z3rno offers a managed cloud at `https://api.z3rno.dev`. Sign up to get an API key and start storing memories immediately without any infrastructure setup.
+
+### 3. How is Z3rno different from a vector database like Pinecone or Weaviate?
+
+Z3rno is a **memory database**, not a general-purpose vector database. The differences:
+
+- **Memory lifecycle:** Memories have importance scores, decay curves, TTLs, and automatic tier transitions. Vector databases store static embeddings.
+- **Temporal versioning:** Z3rno tracks the full mutation history of every memory. You can query "what was known at time T."
+- **Graph relationships:** Memories are connected via typed edges, enabling graph-augmented recall.
+- **Multi-tenancy:** Built-in RLS isolation for multi-tenant SaaS deployments.
+- **Agent-native:** Designed for agent workflows (sessions, memory types, consolidation).
+
+### 4. What is the maximum memory size (content length)?
+
+The default maximum content length is **32,000 characters** per memory. For longer content, split it into multiple memories or summarize before storing. The embedding model processes the full content.
+
+### 5. How much does Z3rno cost to self-host?
+
+Z3rno is Apache 2.0 licensed and free to self-host. Your infrastructure costs are just PostgreSQL and a small application server. A minimal deployment (single node, Docker Compose) can run on a $20/month VM.
+
+### 6. Can multiple agents share the same memories?
+
+Yes. Use the same `agent_id` for multiple agents to create a shared memory space. See the [Multi-Agent Memory guide](/guides/multi-agent-memory) for patterns.
+
+### 7. How do I handle GDPR right-to-erasure requests?
+
+Use hard delete to permanently purge all data for a user:
+
+```python
+client.forget_all(agent_id="agent-1", user_id="user-to-delete", hard=True)
+```
+
+This cascades through PostgreSQL, pgvector, Apache AGE, and Redis. The audit log entry is retained but content is scrubbed.
+
+### 8. Does Z3rno support streaming or real-time updates?
+
+Currently, Z3rno uses a request-response model (REST API). Real-time subscriptions (e.g., "notify me when a new memory is stored") are on the roadmap. For now, poll with recall queries.
+
+### 9. What embedding model does Z3rno use?
+
+The embedding model is configurable on the server side. By default, Z3rno uses OpenAI's `text-embedding-3-small` model. You can configure any embedding model supported by your server deployment. The SDK does not handle embedding -- all embedding happens server-side.
+
+### 10. How do I migrate from another memory system (Mem0, Zep, custom)?
+
+See the [Migration Guide](/migration-guide) for step-by-step instructions. The general approach is:
+1. Export your existing memories as text + metadata.
+2. Use `client.store()` in a loop to ingest them into Z3rno.
+3. Map your existing categories to Z3rno's four memory types.
+4. Verify with recall queries that the data is accessible.
+
+---
+
+## Getting Help
+
+- **GitHub Issues:** [github.com/the-ai-project-co/z3rno](https://github.com/the-ai-project-co)
+- **Discord:** [discord.gg/z3rno](https://discord.gg/z3rno)
+- **Email:** support@z3rno.dev

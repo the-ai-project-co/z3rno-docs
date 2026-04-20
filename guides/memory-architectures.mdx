@@ -1,0 +1,273 @@
+---
+title: Memory Architectures
+description: "Design patterns for memory consolidation from working to episodic to semantic."
+---
+
+# Memory Architectures
+
+This guide covers architectural patterns for using Z3rno's four-tier memory system effectively. The core pattern is **progressive consolidation**: working memory flows into episodic memory, which is distilled into semantic memory, which informs procedural memory.
+
+## The Consolidation Pipeline
+
+```
+Working Memory          Episodic Memory          Semantic Memory         Procedural Memory
+(active context)        (event history)          (facts & knowledge)     (learned behaviours)
+      |                       |                        |                        |
+      |   session ends        |   pattern detected     |   behaviour learned    |
+      |---------------------> |----------------------> |----------------------> |
+      |                       |                        |                        |
+   ephemeral              time-bounded              long-lived               permanent
+   (minutes)              (days/weeks)              (indefinite)             (indefinite)
+```
+
+This mirrors how human memory works: short-term experiences are consolidated into episodic memories during sleep, repeated experiences become semantic knowledge, and practiced skills become procedural habits.
+
+## Pattern 1: Automatic Session Consolidation
+
+The simplest pattern. Z3rno automatically consolidates working memories into episodic memories when a session ends.
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(base_url="http://localhost:8000", api_key="z3rno_sk_...")
+
+# Start a session
+session = client.start_session(agent_id="support-agent")
+
+# During the conversation, store working memories
+client.store(
+    agent_id="support-agent",
+    content="User asked about refund policy for annual plans.",
+    memory_type="working",
+    session_id=session.id,
+)
+client.store(
+    agent_id="support-agent",
+    content="User has order ORD-4821, purchased 3 days ago.",
+    memory_type="working",
+    session_id=session.id,
+)
+client.store(
+    agent_id="support-agent",
+    content="Issued full refund. User was satisfied with resolution.",
+    memory_type="working",
+    session_id=session.id,
+)
+
+# End session: working memories are consolidated into episodic
+client.end_session(session_id=session.id)
+# Result: An episodic memory is created summarizing the refund interaction
+```
+
+After the session ends, the working memories are evicted and a consolidated episodic memory is created. The next time someone asks "has this user contacted support?", the episodic memory will surface.
+
+## Pattern 2: Episodic-to-Semantic Promotion
+
+When you notice the same fact appearing across multiple episodes, promote it to semantic memory for faster, more reliable recall.
+
+```python
+# After noticing a pattern across multiple interactions...
+# The user has mentioned Python preference in 4 separate conversations.
+
+# Option A: Explicit promotion via API
+client.promote(
+    memory_id="mem_episodic_xyz",
+    target_type="semantic",
+)
+
+# Option B: Store directly as semantic when confidence is high
+client.store(
+    agent_id="support-agent",
+    content="User is a Python developer who prefers CLI tools over GUIs.",
+    memory_type="semantic",
+    importance=0.85,
+    metadata={"derived_from": ["mem_ep_1", "mem_ep_2", "mem_ep_3", "mem_ep_4"]},
+)
+```
+
+### Automated Pattern Detection
+
+Build a periodic job that scans episodic memories for repeated themes:
+
+```python
+def consolidate_episodes(agent_id: str):
+    """Scan recent episodes and extract semantic facts."""
+    from openai import OpenAI
+    oai = OpenAI()
+
+    # Get recent episodic memories
+    episodes = client.recall(
+        agent_id=agent_id,
+        query="*",
+        memory_type="episodic",
+        top_k=50,
+    )
+
+    if len(episodes.results) < 5:
+        return  # Not enough data to consolidate
+
+    # Use an LLM to extract recurring facts
+    episode_text = "\n".join(f"- {r.content}" for r in episodes.results)
+
+    completion = oai.chat.completions.create(
+        model="gpt-4o",
+        messages=[{
+            "role": "system",
+            "content": "Extract recurring facts, preferences, and patterns from these interaction summaries. Return each fact on its own line. Only include facts that appear in multiple interactions.",
+        }, {
+            "role": "user",
+            "content": episode_text,
+        }],
+    )
+
+    facts = completion.choices[0].message.content.strip().split("\n")
+    for fact in facts:
+        if fact.strip():
+            client.store(
+                agent_id=agent_id,
+                content=fact.strip(),
+                memory_type="semantic",
+                metadata={"source": "episode_consolidation"},
+            )
+```
+
+## Pattern 3: Procedural Learning
+
+Extract behavioural patterns from successful interactions and store them as procedural memories.
+
+```python
+def learn_procedure(agent_id: str, pattern: str, confidence: float = 0.7):
+    """Store a learned behaviour as procedural memory."""
+    client.store(
+        agent_id=agent_id,
+        content=pattern,
+        memory_type="procedural",
+        importance=confidence,
+        metadata={"type": "learned_behaviour"},
+    )
+
+# After observing that empathetic responses get higher satisfaction scores:
+learn_procedure(
+    "support-agent",
+    "When a user is frustrated, acknowledge their frustration explicitly before offering a solution. Example: 'I understand this is frustrating. Let me help fix this right away.'",
+    confidence=0.85,
+)
+
+# After observing that step-by-step responses work better for technical questions:
+learn_procedure(
+    "support-agent",
+    "For technical troubleshooting questions, provide numbered step-by-step instructions rather than paragraph explanations.",
+    confidence=0.9,
+)
+```
+
+### Using Procedural Memory in Responses
+
+```python
+def get_response_guidelines(agent_id: str, question: str) -> str:
+    """Recall procedural memory to guide response generation."""
+    response = client.recall(
+        agent_id=agent_id,
+        query=question,
+        memory_type="procedural",
+        top_k=3,
+    )
+    if response.results:
+        return "\n".join(f"- {r.content}" for r in response.results)
+    return ""
+
+# Include procedural guidance in the system prompt
+guidelines = get_response_guidelines("support-agent", "User is frustrated about billing")
+system_prompt = f"""You are a support agent. Follow these learned guidelines:
+{guidelines}
+"""
+```
+
+## Pattern 4: Full-Stack Memory Architecture
+
+Combine all tiers into a complete memory system:
+
+```python
+class AgentMemory:
+    """Full-stack memory architecture using all four tiers."""
+
+    def __init__(self, client: Z3rnoClient, agent_id: str):
+        self.client = client
+        self.agent_id = agent_id
+
+    def build_context(self, query: str) -> dict:
+        """Build a comprehensive context from all memory tiers."""
+
+        # Procedural: How should I respond?
+        procedures = self.client.recall(
+            agent_id=self.agent_id,
+            query=query,
+            memory_type="procedural",
+            top_k=3,
+        )
+
+        # Semantic: What do I know?
+        facts = self.client.recall(
+            agent_id=self.agent_id,
+            query=query,
+            memory_type="semantic",
+            top_k=5,
+        )
+
+        # Episodic: What has happened before?
+        episodes = self.client.recall(
+            agent_id=self.agent_id,
+            query=query,
+            memory_type="episodic",
+            top_k=5,
+        )
+
+        # Working: What is happening right now?
+        working = self.client.recall(
+            agent_id=self.agent_id,
+            query=query,
+            memory_type="working",
+            top_k=10,
+        )
+
+        return {
+            "guidelines": [r.content for r in procedures.results],
+            "facts": [r.content for r in facts.results],
+            "history": [r.content for r in episodes.results],
+            "current_context": [r.content for r in working.results],
+        }
+
+    def format_system_prompt(self, context: dict) -> str:
+        """Format memory context into a system prompt section."""
+        parts = []
+        if context["guidelines"]:
+            parts.append("## Response Guidelines\n" + "\n".join(f"- {g}" for g in context["guidelines"]))
+        if context["facts"]:
+            parts.append("## Known Facts\n" + "\n".join(f"- {f}" for f in context["facts"]))
+        if context["history"]:
+            parts.append("## Relevant History\n" + "\n".join(f"- {h}" for h in context["history"]))
+        if context["current_context"]:
+            parts.append("## Current Session\n" + "\n".join(f"- {c}" for c in context["current_context"]))
+        return "\n\n".join(parts)
+
+# Usage
+memory = AgentMemory(client, "support-agent")
+context = memory.build_context("User asking about refund")
+prompt_section = memory.format_system_prompt(context)
+```
+
+## Architecture Decision Guide
+
+| Scenario | Recommended Architecture |
+|---|---|
+| Simple chatbot with history | Session consolidation only (Pattern 1) |
+| Personal assistant that learns | Session + episodic-to-semantic (Patterns 1+2) |
+| Customer support agent | Full-stack with procedural learning (Pattern 4) |
+| Research agent | Episodic + semantic without procedural (Patterns 1+2) |
+| Multi-agent crew | Shared semantic + private working (see [Multi-Agent Memory](/guides/multi-agent-memory)) |
+
+## Next Steps
+
+- [Memory Lifecycle](/concepts/memory-lifecycle) for decay curves and retention policies
+- [RAG Pipeline](/guides/rag-pipeline) for retrieval-augmented generation patterns
+- [Memory Types](/concepts/memory-types) for detailed tier specifications

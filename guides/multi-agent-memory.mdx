@@ -1,0 +1,230 @@
+---
+title: Multi-Agent Memory
+description: "Patterns for sharing memory between multiple AI agents."
+---
+
+# Multi-Agent Memory
+
+When you have multiple agents working together -- whether in a CrewAI crew, a LangGraph workflow, or a custom orchestrator -- they often need to share knowledge. This guide covers patterns for memory sharing in Z3rno.
+
+## How Sharing Works
+
+Z3rno scopes memories by `agent_id` within an organisation. To share memory between agents, you have two options:
+
+1. **Same agent_id** -- Multiple agents read/write the same memory space.
+2. **Cross-agent recall** -- Agents have their own memory spaces but can query other agents' memories.
+
+## Pattern 1: Shared Memory Space
+
+The simplest sharing pattern. All agents use the same `agent_id`, creating a single shared memory pool.
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(base_url="http://localhost:8000", api_key="z3rno_sk_...")
+
+SHARED_AGENT_ID = "research-crew"
+
+# Researcher agent stores findings
+client.store(
+    agent_id=SHARED_AGENT_ID,
+    content="Competitor X raised $50M Series B in March 2026.",
+    memory_type="semantic",
+    metadata={"source_agent": "researcher", "topic": "competitors"},
+)
+
+# Analyst agent reads shared memory
+response = client.recall(
+    agent_id=SHARED_AGENT_ID,
+    query="What do we know about competitor funding?",
+    top_k=10,
+)
+
+# Writer agent uses shared knowledge
+response = client.recall(
+    agent_id=SHARED_AGENT_ID,
+    query="competitive landscape summary",
+    top_k=20,
+)
+```
+
+**When to use:** Agents working on the same task that need full visibility into each other's findings. Good for pipelines where one agent's output feeds directly into another.
+
+## Pattern 2: Isolated Agents with Cross-Query
+
+Each agent maintains its own memory space. When collaboration is needed, an orchestrator queries across agent memories.
+
+```python
+# Each agent has its own memory
+RESEARCHER_ID = "researcher-agent"
+ANALYST_ID = "analyst-agent"
+WRITER_ID = "writer-agent"
+
+# Researcher stores in its own space
+client.store(
+    agent_id=RESEARCHER_ID,
+    content="Found 5 competitors in the AI memory market.",
+    memory_type="semantic",
+)
+
+# Orchestrator gathers context from multiple agents
+def gather_context(query: str) -> list:
+    """Pull relevant memories from all agents."""
+    all_results = []
+    for aid in [RESEARCHER_ID, ANALYST_ID, WRITER_ID]:
+        response = client.recall(
+            agent_id=aid,
+            query=query,
+            top_k=5,
+        )
+        for r in response.results:
+            all_results.append({
+                "agent": aid,
+                "content": r.content,
+                "score": r.relevance_score,
+            })
+    # Sort by relevance across all agents
+    return sorted(all_results, key=lambda x: x["score"], reverse=True)[:10]
+
+context = gather_context("competitive analysis findings")
+```
+
+**When to use:** Agents that are semi-independent and only need occasional access to each other's knowledge. Good when you want to maintain clear ownership of memories.
+
+## Pattern 3: Hierarchical Memory
+
+Agents have private memories plus access to a shared organizational knowledge base.
+
+```python
+ORG_KNOWLEDGE_ID = "org-knowledge-base"
+
+def store_with_promotion(agent_id: str, content: str, promote: bool = False):
+    """Store in agent's private memory, optionally promote to org-wide."""
+    # Always store in agent's private space
+    client.store(
+        agent_id=agent_id,
+        content=content,
+        memory_type="semantic",
+    )
+    # Optionally promote to shared org knowledge
+    if promote:
+        client.store(
+            agent_id=ORG_KNOWLEDGE_ID,
+            content=content,
+            memory_type="semantic",
+            metadata={"promoted_by": agent_id},
+        )
+
+def recall_with_org(agent_id: str, query: str, top_k: int = 10):
+    """Recall from both private memory and org knowledge base."""
+    private = client.recall(agent_id=agent_id, query=query, top_k=top_k)
+    org = client.recall(agent_id=ORG_KNOWLEDGE_ID, query=query, top_k=top_k)
+
+    # Merge and deduplicate
+    all_results = private.results + org.results
+    seen = set()
+    unique = []
+    for r in sorted(all_results, key=lambda x: x.relevance_score, reverse=True):
+        if r.content not in seen:
+            seen.add(r.content)
+            unique.append(r)
+    return unique[:top_k]
+
+# Agent discovers something important
+store_with_promotion(
+    "researcher-agent",
+    "Z3rno's main competitor Mem0 just launched enterprise features.",
+    promote=True,  # This is org-wide knowledge
+)
+
+# Any agent can access org knowledge
+results = recall_with_org("writer-agent", "competitor updates")
+```
+
+## Pattern 4: Message-Passing Memory
+
+Agents communicate by storing messages in memory that other agents poll for.
+
+```python
+import json
+from datetime import datetime
+
+def send_to_agent(from_agent: str, to_agent: str, message: str):
+    """Send a memory-backed message to another agent."""
+    client.store(
+        agent_id=to_agent,
+        content=message,
+        memory_type="working",
+        metadata={
+            "from_agent": from_agent,
+            "message_type": "inter_agent",
+            "sent_at": datetime.utcnow().isoformat(),
+        },
+    )
+
+def check_messages(agent_id: str) -> list:
+    """Check for messages from other agents."""
+    response = client.recall(
+        agent_id=agent_id,
+        query="inter-agent message",
+        top_k=20,
+        filters={"message_type": "inter_agent"},
+        memory_type="working",
+    )
+    return [
+        {"from": r.metadata.get("from_agent"), "content": r.content}
+        for r in response.results
+    ]
+
+# Researcher sends findings to analyst
+send_to_agent("researcher", "analyst", "Completed competitor analysis. Found 5 players.")
+
+# Analyst checks for messages
+messages = check_messages("analyst")
+```
+
+## Pattern 5: Session-Scoped Collaboration
+
+Agents share working memory within a session, then memories consolidate when the session ends.
+
+```python
+# Start a shared session
+session = client.start_session(agent_id="collab-crew")
+
+# Multiple agents contribute to the same session
+client.store(
+    agent_id="collab-crew",
+    content="Researcher found: Market size is $2B by 2027.",
+    memory_type="working",
+    session_id=session.id,
+    metadata={"contributor": "researcher"},
+)
+
+client.store(
+    agent_id="collab-crew",
+    content="Analyst validated: Growth rate confirmed at 35% CAGR.",
+    memory_type="working",
+    session_id=session.id,
+    metadata={"contributor": "analyst"},
+)
+
+# When the session ends, working memories are consolidated into episodic
+client.end_session(session_id=session.id)
+# Result: A consolidated episodic memory summarizing the collaboration
+```
+
+## Choosing a Pattern
+
+| Pattern | Best For | Complexity |
+|---|---|---|
+| Shared memory space | Tightly coupled agents on the same task | Low |
+| Cross-agent recall | Semi-independent agents with occasional sharing | Medium |
+| Hierarchical memory | Private work + shared organizational knowledge | Medium |
+| Message-passing | Asynchronous agent communication | Medium |
+| Session-scoped | Synchronous collaboration with automatic consolidation | Low |
+
+## Next Steps
+
+- [CrewAI Integration](/integrations/crewai) for using these patterns with CrewAI
+- [Memory Architectures](/guides/memory-architectures) for consolidation strategies
+- [Multi-Tenancy](/concepts/multi-tenancy) to understand isolation boundaries

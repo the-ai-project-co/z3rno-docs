@@ -5,34 +5,150 @@ description: "Use Z3rno as shared memory for CrewAI multi-agent workflows."
 
 # CrewAI Integration
 
-<Note>
-This integration guide is coming soon. Z3rno provides shared memory across CrewAI agents.
-</Note>
+Z3rno provides `Z3rnoCrewAIStorage`, a storage adapter that implements CrewAI's memory interface. This lets multiple CrewAI agents share persistent memory backed by Z3rno.
 
-## Quick Preview
+## Installation
+
+```bash
+pip install z3rno
+pip install crewai
+```
+
+## Setup
 
 ```python
 from z3rno import Z3rnoClient
+from z3rno.integrations.crewai import Z3rnoCrewAIStorage
 
 client = Z3rnoClient(
     base_url="http://localhost:8000",
     api_key="z3rno_sk_...",
 )
-
-# Agent 1 stores a finding
-client.store(
-    agent_id="researcher",
-    content="Found 3 competitor products in the AI memory space",
-    memory_type="semantic",
-    metadata={"crew": "market-research"},
-)
-
-# Agent 2 recalls shared knowledge
-results = client.recall(
-    agent_id="analyst",
-    query="What competitors exist?",
-    top_k=10,
-)
 ```
 
-See the [Python SDK guide](/sdks/python) for full API documentation.
+## Memory Type Mapping
+
+CrewAI's memory categories map to Z3rno memory types:
+
+| CrewAI Category | Z3rno Memory Type | Use Case |
+|---|---|---|
+| `short_term` | `working` | Active task context |
+| `long_term` | `episodic` | Interaction history |
+| `entity` | `semantic` | Facts and knowledge |
+
+## Basic Usage
+
+```python
+# Short-term memory (maps to Z3rno "working" type)
+short_term = Z3rnoCrewAIStorage(
+    client,
+    agent_id="researcher",
+    memory_type="short_term",
+)
+
+# Long-term memory (maps to Z3rno "episodic" type)
+long_term = Z3rnoCrewAIStorage(
+    client,
+    agent_id="researcher",
+    memory_type="long_term",
+)
+
+# Entity memory (maps to Z3rno "semantic" type)
+entity = Z3rnoCrewAIStorage(
+    client,
+    agent_id="researcher",
+    memory_type="entity",
+)
+
+# Save a memory
+result = short_term.save(
+    key="current_task",
+    value="Researching competitor landscape in AI memory space",
+    metadata={"priority": "high"},
+)
+print(f"Stored: {result['id']}")
+
+# Search memories by semantic similarity
+results = short_term.search(
+    query="What am I currently working on?",
+    limit=5,
+    score_threshold=0.3,
+)
+for r in results:
+    print(f"  {r['content']} (score: {r['score']:.2f})")
+
+# Reset all memories for this agent/type
+short_term.reset()
+```
+
+## Shared Memory Across Agents
+
+The primary advantage of using Z3rno with CrewAI is that multiple agents can share a memory store. Use the same `agent_id` across agents to create a shared memory space, or use different `agent_id` values for isolated memories.
+
+```python
+# Shared memory: all crew agents read/write the same store
+shared_store = Z3rnoCrewAIStorage(
+    client,
+    agent_id="market-research-crew",  # Same agent_id = shared memory
+    memory_type="entity",
+)
+
+# Agent 1 (Researcher) stores findings
+shared_store.save(
+    key="competitor_1",
+    value="Mem0 offers open-source agent memory with a managed cloud option.",
+    metadata={"source": "web_search", "agent": "researcher"},
+)
+
+shared_store.save(
+    key="competitor_2",
+    value="Zep provides long-term memory for AI assistants with temporal awareness.",
+    metadata={"source": "web_search", "agent": "researcher"},
+)
+
+# Agent 2 (Analyst) recalls shared findings
+competitors = shared_store.search(
+    query="What competitors exist in the AI memory space?",
+    limit=10,
+)
+for c in competitors:
+    print(f"  [{c['metadata'].get('agent')}] {c['content']}")
+```
+
+## With CrewAI's Memory System
+
+When configuring a CrewAI Crew, pass the Z3rno storage as the memory backend:
+
+```python
+from crewai import Agent, Crew, Task
+
+researcher = Agent(
+    role="Market Researcher",
+    goal="Find and analyze competitors",
+    backstory="Expert market analyst",
+)
+
+analyst = Agent(
+    role="Strategy Analyst",
+    goal="Synthesize research into insights",
+    backstory="Senior strategy consultant",
+)
+
+# Both agents share memory via Z3rno
+crew = Crew(
+    agents=[researcher, analyst],
+    tasks=[...],
+    memory=True,
+    short_term_memory=Z3rnoCrewAIStorage(client, agent_id="crew-1", memory_type="short_term"),
+    long_term_memory=Z3rnoCrewAIStorage(client, agent_id="crew-1", memory_type="long_term"),
+    entity_memory=Z3rnoCrewAIStorage(client, agent_id="crew-1", memory_type="entity"),
+)
+
+result = crew.kickoff()
+```
+
+## Next Steps
+
+- [Multi-Agent Memory Guide](/guides/multi-agent-memory) for advanced sharing patterns
+- [Memory Types](/concepts/memory-types) to understand the four tiers
+- [Python SDK Reference](/sdks/python) for all available parameters
