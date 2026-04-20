@@ -79,6 +79,9 @@
       }
     ]
   },
+  "openapi": [
+    "api/openapi.json"
+  ],
   "footerSocials": {
     "github": "https://github.com/the-ai-project-co",
     "twitter": "https://twitter.com/z3rno_dev"
