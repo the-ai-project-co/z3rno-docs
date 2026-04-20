@@ -1,6 +1,6 @@
 # z3rno-docs
 
-> The public-facing product documentation site for Z3rno. Built with [Mintlify](https://mintlify.com/). Hosted at `https://z3rno.dev/docs` (once configured in Week 6).
+> The public-facing product documentation site for Z3rno. Built with [Mintlify](https://mintlify.com/). Hosted at `https://astron-bb4261fd.mintlify.app` (once configured in Week 6).
 
 **License:** Apache 2.0
 **Status:** Skeleton (full content lands in Phase 1 / Week 6)
