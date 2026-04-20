@@ -1,0 +1,139 @@
+---
+title: Temporal Versioning
+description: "How Z3rno tracks the full history of every memory using SCD Type 2 and point-in-time queries."
+---
+
+# Temporal Versioning
+
+Z3rno tracks the complete mutation history of every memory. When a memory is updated, the old version is preserved and a new version is created. You can query what an agent knew at any point in time.
+
+## SCD Type 2 Pattern
+
+Z3rno uses the [Slowly Changing Dimension Type 2 (SCD Type 2)](https://en.wikipedia.org/wiki/Slowly_changing_dimension#Type_2:_add_new_row) pattern, a well-established data warehousing technique adapted for agent memory.
+
+Every memory row has two temporal columns:
+
+| Column | Type | Description |
+|---|---|---|
+| `valid_from` | `timestamptz` | When this version became active |
+| `valid_to` | `timestamptz` | When this version was superseded (`NULL` if current) |
+
+The **current version** of a memory always has `valid_to = NULL`. When a memory is updated, a database trigger:
+
+1. Sets `valid_to = NOW()` on the current version
+2. Inserts a new row with `valid_from = NOW()` and `valid_to = NULL`
+3. Copies the `memory_id` so all versions share the same logical identity
+
+```sql
+-- Simplified: what the trigger does on UPDATE
+UPDATE memories SET valid_to = NOW() WHERE memory_id = $1 AND valid_to IS NULL;
+INSERT INTO memories (memory_id, content, valid_from, valid_to, ...)
+    VALUES ($1, $new_content, NOW(), NULL, ...);
+```
+
+## Point-in-Time Queries
+
+You can query what an agent knew at any specific moment using the `as_of` parameter:
+
+```python
+# What did the agent know on March 15, 2026?
+results = client.recall(
+    agent_id="agent-1",
+    query="user preferences",
+    as_of="2026-03-15T12:00:00Z",
+)
+```
+
+Under the hood, this translates to:
+
+```sql
+SELECT * FROM memories
+WHERE agent_id = $1
+  AND valid_from <= '2026-03-15T12:00:00Z'
+  AND (valid_to IS NULL OR valid_to > '2026-03-15T12:00:00Z');
+```
+
+This returns exactly the memories that were **active** at that timestamp — not what was created before it, but what was the current version at that moment.
+
+<Note>
+Point-in-time queries work across all memory types and all query methods (keyword, vector similarity, graph traversal). The temporal filter is applied before any other filtering or ranking.
+</Note>
+
+## Full Mutation History
+
+You can retrieve the complete version history of any memory:
+
+```python
+history = client.history(memory_id="mem_abc123")
+
+for version in history:
+    print(f"v{version.version}: {version.content}")
+    print(f"  Active: {version.valid_from} → {version.valid_to or 'current'}")
+```
+
+Example output:
+
+```
+v1: User prefers light mode.
+  Active: 2026-01-10T09:00:00Z → 2026-02-20T14:30:00Z
+
+v2: User prefers dark mode.
+  Active: 2026-02-20T14:30:00Z → 2026-04-01T11:00:00Z
+
+v3: User prefers dark mode with high contrast.
+  Active: 2026-04-01T11:00:00Z → current
+```
+
+This audit trail is invaluable for:
+
+- **Debugging** — understanding why an agent behaved a certain way at a specific time
+- **Compliance** — demonstrating what data was active during an incident
+- **Rollback** — reverting to a previous version if an update was incorrect
+
+## How Updates Create New Versions
+
+Updates are handled by a PostgreSQL trigger that fires on any `UPDATE` to the memories table. The trigger is **atomic** — the old version closure and new version insertion happen in a single transaction.
+
+```python
+# This update creates a new version, not an in-place mutation
+client.update(
+    memory_id="mem_abc123",
+    content="User prefers dark mode with high contrast.",
+)
+```
+
+The original memory is never modified. The `memory_id` stays the same across all versions, so you can always refer to the logical memory by its ID and get the current version, or pass `as_of` to get a historical version.
+
+### Version metadata
+
+Each version also tracks:
+
+| Field | Description |
+|---|---|
+| `version` | Auto-incrementing version number (1, 2, 3, ...) |
+| `updated_by` | The API key or system process that made the change |
+| `update_reason` | Optional free-text reason for the update |
+| `importance` | Importance score at the time of this version |
+
+```python
+client.update(
+    memory_id="mem_abc123",
+    content="User prefers system theme (was dark mode).",
+    update_reason="User explicitly changed preference in settings.",
+)
+```
+
+## Indexing and Performance
+
+Temporal queries are fast because Z3rno creates a **GiST index** on the `(valid_from, valid_to)` range using PostgreSQL's built-in range types:
+
+```sql
+CREATE INDEX idx_memories_temporal
+    ON memories USING gist (tstzrange(valid_from, valid_to));
+```
+
+This allows PostgreSQL to efficiently find all rows where a given timestamp falls within the `[valid_from, valid_to)` range, even across millions of memory versions.
+
+<Warning>
+While temporal versioning preserves all history by default, hard deletes (GDPR-compliant) remove **all versions** of a memory, not just the current one. If you need to retain history for compliance, use soft delete instead.
+</Warning>

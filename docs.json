@@ -1,5 +1,5 @@
 {
-  "$schema": "https://mintlify.com/schema.json",
+  "$schema": "https://mintlify.com/docs.json",
   "name": "Z3rno",
   "logo": {
     "dark": "/logo/z3rno-wordmark-dark.svg",
@@ -38,7 +38,8 @@
       "group": "Getting Started",
       "pages": [
         "introduction",
-        "quickstart"
+        "quickstart",
+        "migration-guide"
       ]
     },
     {
@@ -75,6 +76,7 @@
       ]
     }
   ],
+  "openapi": "https://api.z3rno.dev/openapi.json",
   "footerSocials": {
     "github": "https://github.com/the-ai-project-co",
     "twitter": "https://twitter.com/z3rno_dev"

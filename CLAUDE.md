@@ -13,7 +13,7 @@ mintlify dev                     # Local dev server at http://localhost:3000
 
 ## Architecture
 
-- `mint.json` — Mintlify configuration: navigation, colors (#00D4AA teal), logo, topbar links
+- `docs.json` — Mintlify configuration: navigation, colors (#00D4AA teal), logo, topbar links
 - `introduction.mdx` — Landing page
 - `quickstart.mdx` — Getting started guide
 - Content is MDX (Markdown + JSX components)
@@ -21,7 +21,7 @@ mintlify dev                     # Local dev server at http://localhost:3000
 ## Key Conventions
 
 - All content is MDX format
-- Navigation structure defined in mint.json
+- Navigation structure defined in docs.json
 - API reference auto-generated from OpenAPI spec (when configured)
 - Markdown linting via markdownlint-cli2
 - No code, no tests, no build step (Mintlify handles rendering)

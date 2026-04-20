@@ -1,0 +1,191 @@
+---
+title: Memory Lifecycle
+description: "How memories are scored, decayed, transitioned, and deleted in Z3rno."
+---
+
+# Memory Lifecycle
+
+Memories in Z3rno are not static. They are scored for importance, decay over time, transition between tiers, and can be permanently deleted. This page explains each stage of the lifecycle.
+
+## Importance Scoring
+
+Every memory receives an **importance score** between 0.0 and 1.0 at creation time. This score determines how long the memory survives decay and how it ranks in recall results.
+
+| Score Range | Meaning | Example |
+|---|---|---|
+| 0.8 - 1.0 | Critical | User's name, account ID, explicit preferences |
+| 0.5 - 0.79 | Notable | Discussed a specific topic in detail |
+| 0.2 - 0.49 | Routine | Standard greeting, small talk |
+| 0.0 - 0.19 | Trivial | Filler words, repeated information |
+
+Importance is calculated using a combination of signals:
+
+- **Explicit marking** — the caller sets an importance score via the API
+- **Content analysis** — ML-based scoring that evaluates specificity, sentiment intensity, and information density
+- **Recency weighting** — recently accessed memories receive a temporary importance boost
+- **Access frequency** — memories that are recalled often have their importance reinforced
+
+```python
+# Explicit importance score
+client.store(
+    agent_id="agent-1",
+    content="User's preferred name is Alex.",
+    memory_type="semantic",
+    importance=0.95,  # High — this is critical user context
+)
+```
+
+<Note>
+If you do not provide an importance score, Z3rno calculates one automatically using the ML-based scorer. You can override the auto-score at any time via the update endpoint.
+</Note>
+
+## Decay Curves
+
+Memories decay over time. The rate of decay depends on the **decay curve** configured for the memory type. Z3rno supports three decay curves:
+
+### Exponential Decay
+
+The default for episodic memories. Importance drops rapidly at first, then slowly approaches zero. Mirrors the [Ebbinghaus forgetting curve](https://en.wikipedia.org/wiki/Forgetting_curve).
+
+```
+score(t) = initial_score * e^(-lambda * t)
+```
+
+### Logarithmic Decay
+
+The default for semantic memories. Importance drops slowly at first, then more rapidly. Useful for facts that remain relevant for a long time but eventually become stale.
+
+```
+score(t) = initial_score * (1 - log(1 + alpha * t) / log(1 + alpha * T_max))
+```
+
+### Step Decay
+
+A simple threshold-based decay. Importance stays constant until a deadline, then drops to zero. Useful for time-bounded information (e.g., "meeting at 3pm today").
+
+```
+score(t) = initial_score   if t < threshold
+score(t) = 0               if t >= threshold
+```
+
+<Warning>
+Working memories do not use decay curves — they are evicted entirely when the session ends. Procedural memories have no decay by default (importance remains constant).
+</Warning>
+
+## TTL Enforcement
+
+Each memory type has a configurable **time-to-live (TTL)**. When a memory's age exceeds its TTL, it is soft-deleted (marked as expired but retained for audit purposes).
+
+| Memory Type | Default TTL | Configurable |
+|---|---|---|
+| Working | Session duration | Yes (idle timeout) |
+| Episodic | 30 days | Yes |
+| Semantic | None (indefinite) | Yes |
+| Procedural | None (indefinite) | No |
+
+TTL is enforced by a background worker that runs on a configurable interval (default: every 5 minutes). Expired memories are not returned by recall queries.
+
+```python
+# Store with a custom TTL
+client.store(
+    agent_id="agent-1",
+    content="User mentioned they are travelling next week.",
+    memory_type="episodic",
+    ttl_seconds=604800,  # 7 days
+)
+```
+
+## Retention Caps
+
+To prevent unbounded memory growth, Z3rno enforces **retention caps** — maximum number of memories per tier per agent.
+
+| Memory Type | Default Cap | Behaviour When Full |
+|---|---|---|
+| Working | 100 | Oldest evicted (LRU) |
+| Episodic | 10,000 | Lowest importance evicted |
+| Semantic | 50,000 | Lowest importance evicted |
+| Procedural | 5,000 | Lowest confidence evicted |
+
+When a cap is reached, Z3rno evicts the least important memory in that tier before storing the new one. Evicted memories are soft-deleted and retained in the audit trail.
+
+## Memory Transitions
+
+Memories naturally move between tiers as they age and are processed:
+
+### Working to Episodic
+
+When a session ends, the session manager consolidates working memories into one or more episodic memories. This happens automatically.
+
+```
+Session ends → working memories summarised → episodic memory created → working memories evicted
+```
+
+### Episodic to Semantic
+
+When the lifecycle engine detects repeated patterns across multiple episodes, it can promote information to semantic memory. This is triggered by:
+
+- **Summarisation** — a batch job that summarises clusters of related episodic memories
+- **Repetition detection** — the same fact appearing across 3+ episodes
+- **Explicit promotion** — the caller promotes a memory via the API
+
+```python
+# Explicit promotion
+client.promote(
+    memory_id="mem_abc123",
+    target_type="semantic",
+)
+```
+
+### Episodic to Procedural
+
+When the lifecycle engine detects learned behaviours from episode sequences, it can extract procedural memories. This typically requires:
+
+- A sequence of episodes showing the same pattern
+- A confidence threshold (default: 0.7)
+- Human or agent confirmation (configurable)
+
+## Deletion
+
+Z3rno supports two levels of deletion:
+
+### Soft Delete
+
+Marks a memory as deleted. It no longer appears in recall results but is retained in the audit trail for compliance purposes.
+
+```python
+client.forget(agent_id="agent-1", memory_id="mem_abc123")
+```
+
+### Hard Delete (GDPR-Compliant)
+
+Permanently removes a memory and **all associated data** from every storage layer. This is a cascading delete:
+
+1. PostgreSQL row deleted (not just flagged)
+2. Vector embedding removed from pgvector index
+3. Graph nodes and edges removed from Apache AGE
+4. Redis cache entry evicted
+5. Audit log entry marked as `hard_deleted` (the log entry itself is retained, but the memory content is scrubbed)
+
+```python
+client.forget(
+    agent_id="agent-1",
+    memory_id="mem_abc123",
+    hard=True,  # GDPR-compliant permanent deletion
+)
+```
+
+<Warning>
+Hard deletes are **irreversible**. The memory content cannot be recovered after a hard delete. Use this for GDPR right-to-erasure requests or when you need to guarantee that data is fully purged.
+</Warning>
+
+### Bulk Deletion
+
+You can delete all memories for a specific agent, user, or organisation:
+
+```python
+# Delete all memories for an agent (soft)
+client.forget_all(agent_id="agent-1")
+
+# Delete all memories for an agent (hard, GDPR-compliant)
+client.forget_all(agent_id="agent-1", hard=True)
+```

@@ -33,6 +33,12 @@ jobs:
             exit 0
           }
 
+      - name: Install Mintlify CLI
+        run: npm install -g mintlify
+
+      - name: Validate MDX
+        run: mintlify broken-links || echo "::warning::Mintlify validation found issues"
+
       - name: Lychee — broken link check
         uses: lycheeverse/lychee-action@v2
         with:

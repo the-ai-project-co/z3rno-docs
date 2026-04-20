@@ -1,0 +1,133 @@
+---
+title: Configuration
+description: "Complete environment variable reference for Z3rno."
+---
+
+# Configuration
+
+Z3rno is configured entirely through environment variables. This page documents every available setting.
+
+## Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://z3rno:z3rno@localhost:5432/z3rno` | PostgreSQL connection string |
+| `DATABASE_POOL_SIZE` | `10` | Connection pool size |
+| `DATABASE_MAX_OVERFLOW` | `20` | Maximum overflow connections beyond pool size |
+| `DATABASE_POOL_TIMEOUT` | `30` | Seconds to wait for a connection from the pool |
+| `DATABASE_POOL_RECYCLE` | `3600` | Seconds before a connection is recycled |
+| `DATABASE_ECHO` | `false` | Log all SQL statements (for debugging) |
+
+<Warning>
+The PostgreSQL instance must have `pgvector` and `Apache AGE` extensions installed and enabled. Z3rno runs `CREATE EXTENSION IF NOT EXISTS` on startup.
+</Warning>
+
+## Redis / Valkey
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis or Valkey connection URL |
+| `REDIS_MAX_CONNECTIONS` | `20` | Maximum connections in the Redis pool |
+| `CELERY_BROKER_URL` | Same as `REDIS_URL` | Celery task broker URL (defaults to `REDIS_URL` if not set) |
+| `CELERY_RESULT_BACKEND` | Same as `REDIS_URL` | Celery result backend URL |
+
+## Embedding
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | `openai` | Embedding provider: `openai`, `cohere`, `local` |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name for the embedding provider |
+| `EMBEDDING_DIMENSIONS` | `1536` | Vector dimensions (must match model output) |
+| `OPENAI_API_KEY` | — | API key for OpenAI embeddings |
+| `COHERE_API_KEY` | — | API key for Cohere embeddings |
+| `EMBEDDING_BATCH_SIZE` | `100` | Number of texts to embed per API call |
+
+<Note>
+When switching embedding providers or models, you must re-embed all existing memories. Vectors from different models are not compatible.
+</Note>
+
+## Server
+
+| Variable | Default | Description |
+|---|---|---|
+| `Z3RNO_HOST` | `0.0.0.0` | Host to bind the server to |
+| `Z3RNO_PORT` | `8000` | Port to bind the server to |
+| `Z3RNO_WORKERS` | `4` | Number of Uvicorn workers |
+| `Z3RNO_API_KEY` | `z3rno_sk_test_localdev` | API key for authenticating requests |
+| `Z3RNO_CORS_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
+
+## Rate limiting
+
+| Variable | Default | Description |
+|---|---|---|
+| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+| `RATE_LIMIT_REQUESTS` | `100` | Maximum requests per window |
+| `RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
+| `RATE_LIMIT_BURST` | `20` | Burst allowance above the steady rate |
+| `RATE_LIMIT_BACKEND` | `redis` | Rate limit storage: `redis` or `memory` |
+
+## Memory lifecycle
+
+| Variable | Default | Description |
+|---|---|---|
+| `IMPORTANCE_DECAY_INTERVAL` | `3600` | Seconds between importance decay runs |
+| `IMPORTANCE_DECAY_RATE` | `0.01` | Decay rate per interval (0.0 - 1.0) |
+| `MEMORY_TTL_DEFAULT` | `0` | Default memory TTL in seconds (0 = no expiry) |
+| `MEMORY_RETENTION_CAP` | `10000` | Maximum memories per agent before pruning |
+
+## Logging
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warning`, `error`, `critical` |
+| `LOG_FORMAT` | `json` | Log format: `json` or `text` |
+| `LOG_INCLUDE_TIMESTAMP` | `true` | Include ISO 8601 timestamp in log entries |
+| `SENTRY_DSN` | — | Sentry DSN for error tracking (optional) |
+
+## Multi-tenancy
+
+| Variable | Default | Description |
+|---|---|---|
+| `MULTI_TENANCY_ENABLED` | `true` | Enable multi-tenant isolation |
+| `RLS_ENABLED` | `true` | Enable PostgreSQL Row-Level Security |
+
+## Example `.env` file
+
+```bash
+# Database
+DATABASE_URL=postgresql://z3rno:changeme@postgres:5432/z3rno
+DATABASE_POOL_SIZE=20
+
+# Redis
+REDIS_URL=redis://valkey:6379/0
+
+# Embedding
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_API_KEY=sk-your-openai-key
+
+# Server
+Z3RNO_PORT=8000
+Z3RNO_WORKERS=4
+Z3RNO_API_KEY=z3rno_sk_prod_your-secure-key
+
+# Rate limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_WINDOW=60
+
+# Logging
+LOG_LEVEL=info
+LOG_FORMAT=json
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose" icon="docker" href="/self-hosting/docker-compose">
+    Deploy Z3rno on a single machine with Docker Compose.
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra" href="/self-hosting/kubernetes">
+    Deploy Z3rno on Kubernetes with the official Helm chart.
+  </Card>
+</CardGroup>

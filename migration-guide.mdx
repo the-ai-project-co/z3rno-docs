@@ -1,0 +1,94 @@
+---
+title: "Migration Guide"
+description: "Upgrade instructions and breaking changes for Z3rno releases."
+---
+
+# Migration Guide
+
+This guide covers upgrade steps and breaking changes between Z3rno releases.
+
+## v0.0.1 to v0.1.0
+
+<Note>
+  v0.1.0 has not been released yet. This section will be updated with specific
+  breaking changes and migration steps when the release is finalized.
+</Note>
+
+### Database Migration
+
+Z3rno uses Alembic for database schema migrations. After upgrading the server,
+run:
+
+```bash
+# If using Docker Compose
+docker compose exec server alembic upgrade head
+
+# If running directly
+cd z3rno-server
+alembic upgrade head
+```
+
+<Warning>
+  Always back up your database before running migrations in production.
+</Warning>
+
+### SDK Upgrade
+
+Update the Python SDK:
+
+```bash
+pip install --upgrade z3rno
+# or
+uv pip install --upgrade z3rno
+```
+
+Update the TypeScript SDK:
+
+```bash
+npm install z3rno@latest
+# or
+pnpm update z3rno
+```
+
+### Breaking Changes
+
+Breaking changes follow this format:
+
+| Change | Before | After | Migration |
+|--------|--------|-------|-----------|
+| *Example: method rename* | `client.search()` | `client.recall()` | Find and replace in your codebase |
+
+<Tip>
+  Subscribe to the [GitHub releases](https://github.com/the-ai-project-co/z3rno-server/releases)
+  to be notified of new versions and breaking changes.
+</Tip>
+
+### Helm Chart Upgrade
+
+If you deploy via Helm:
+
+```bash
+# Update the chart repository
+helm repo update
+
+# Review changes before applying
+helm diff upgrade z3rno z3rno/z3rno -f values.yaml
+
+# Apply the upgrade
+helm upgrade z3rno z3rno/z3rno -f values.yaml
+```
+
+### Configuration Changes
+
+Check the [Configuration Reference](/self-hosting/configuration) for any new
+or renamed environment variables between versions.
+
+## General Upgrade Checklist
+
+1. Read the release notes for your target version
+2. Back up your database
+3. Update the server (Docker image or binary)
+4. Run database migrations (`alembic upgrade head`)
+5. Update SDK versions in your applications
+6. Test in a staging environment before production
+7. Monitor logs and metrics after the upgrade

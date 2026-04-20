@@ -1,0 +1,216 @@
+---
+title: Docker Compose
+description: "Deploy Z3rno locally or in production with Docker Compose."
+---
+
+# Docker Compose
+
+Deploy Z3rno on a single machine using Docker Compose. This is the simplest way to self-host and is suitable for development, testing, and small production workloads.
+
+## Prerequisites
+
+- **Docker Engine** 24+ with Docker Compose v2
+- **4 GB RAM** minimum (8 GB recommended for production)
+- **10 GB disk** for PostgreSQL data and embeddings
+
+## Quick start
+
+Clone the server repository and start all services:
+
+```bash
+git clone https://github.com/the-ai-project-co/z3rno-server
+cd z3rno-server
+docker compose up -d
+```
+
+This starts three containers:
+
+| Service | Port | Description |
+|---|---|---|
+| `z3rno-server` | 8000 | FastAPI application server |
+| `postgres` | 5432 | PostgreSQL 16 with pgvector and Apache AGE |
+| `valkey` | 6379 | Valkey (Redis-compatible) cache and broker |
+
+Verify the server is healthy:
+
+```bash
+curl http://localhost:8000/v1/health
+```
+
+## Environment variables
+
+All configuration is done through environment variables. Copy the example file and edit as needed:
+
+```bash
+cp .env.example .env
+```
+
+See the [Configuration reference](/self-hosting/configuration) for the full list of environment variables.
+
+<Note>
+Sensitive values like `DATABASE_URL` and `OPENAI_API_KEY` should be set in `.env` and never committed to source control.
+</Note>
+
+## Production setup
+
+### TLS termination
+
+Use a reverse proxy like Caddy, Traefik, or nginx in front of Z3rno for automatic TLS:
+
+```yaml
+# docker-compose.override.yml
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - z3rno-server
+
+volumes:
+  caddy_data:
+```
+
+```text
+# Caddyfile
+z3rno.example.com {
+    reverse_proxy z3rno-server:8000
+}
+```
+
+### Resource limits
+
+Set memory and CPU limits in your Compose file to prevent runaway containers:
+
+```yaml
+services:
+  z3rno-server:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+```
+
+### External PostgreSQL
+
+For production, use a managed PostgreSQL service (RDS, Cloud SQL, Neon, Supabase) instead of the bundled container. Set the connection string and disable the bundled database:
+
+```bash
+# .env
+DATABASE_URL=postgresql://z3rno:password@your-rds-host:5432/z3rno
+```
+
+```yaml
+# docker-compose.override.yml
+services:
+  postgres:
+    profiles:
+      - disabled
+```
+
+<Warning>
+Your external PostgreSQL instance must have the `pgvector` and `Apache AGE` extensions installed. Most managed providers support pgvector; AGE may require a custom image.
+</Warning>
+
+## Monitoring
+
+### Prometheus
+
+Z3rno exposes a Prometheus metrics endpoint at `/metrics`. Add a Prometheus container to scrape it:
+
+```yaml
+# docker-compose.override.yml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+```
+
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: z3rno
+    static_configs:
+      - targets: ["z3rno-server:8000"]
+```
+
+### Grafana
+
+Add Grafana for dashboards and alerting:
+
+```yaml
+# docker-compose.override.yml
+services:
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: changeme
+
+volumes:
+  grafana_data:
+```
+
+Connect Grafana to Prometheus at `http://prometheus:9090` as a data source.
+
+## Backup and restore
+
+### Database backup
+
+Back up PostgreSQL using `pg_dump`:
+
+```bash
+# Create a backup
+docker compose exec postgres pg_dump -U z3rno -Fc z3rno > backup_$(date +%Y%m%d).dump
+
+# Restore from backup
+docker compose exec -T postgres pg_restore -U z3rno -d z3rno --clean < backup_20260419.dump
+```
+
+### Automated backups
+
+Schedule daily backups with a cron job:
+
+```bash
+# crontab -e
+0 3 * * * cd /opt/z3rno && docker compose exec -T postgres pg_dump -U z3rno -Fc z3rno > /backups/z3rno_$(date +\%Y\%m\%d).dump
+```
+
+### Volume backup
+
+Back up the entire PostgreSQL data volume:
+
+```bash
+docker compose stop postgres
+docker run --rm -v z3rno-server_postgres_data:/data -v $(pwd):/backup alpine \
+  tar czf /backup/postgres_data.tar.gz -C /data .
+docker compose start postgres
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes" icon="dharmachakra" href="/self-hosting/kubernetes">
+    Deploy Z3rno on Kubernetes with the official Helm chart for high availability and auto-scaling.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/self-hosting/configuration">
+    Full environment variable reference for all Z3rno settings.
+  </Card>
+</CardGroup>

@@ -1,0 +1,100 @@
+---
+title: Multi-Tenancy
+description: "How Z3rno isolates data across organisations, users, and agents using PostgreSQL Row-Level Security."
+---
+
+# Multi-Tenancy
+
+Z3rno is designed for multi-tenant deployments from day one. Every memory is scoped to an organisation, and data isolation is enforced at the database level — not in application code.
+
+## Three-Tier Isolation
+
+Z3rno uses a three-tier hierarchy to scope all data:
+
+```
+Organisation (org_id)
+  └── User (user_id)
+        └── Agent (agent_id)
+              └── Memories
+```
+
+| Level | Scope | Example |
+|---|---|---|
+| **Organisation** | Top-level tenant. All data is partitioned by org_id. | Acme Corp |
+| **User** | An end-user within an organisation. | alice@acme.com |
+| **Agent** | An AI agent serving a user. One user can have multiple agents. | "Support Agent", "Research Agent" |
+
+Every memory row in PostgreSQL includes `org_id`, `user_id`, and `agent_id` columns. All three are required when storing or recalling memories.
+
+## PostgreSQL Row-Level Security
+
+Data isolation is enforced using [PostgreSQL Row-Level Security (RLS)](https://www.postgresql.org/docs/current/ddl-rowsecurity.html). RLS policies are applied at the database level, meaning **no application code bug can cause cross-tenant data leakage**.
+
+How it works:
+
+1. Each API request authenticates with an API key
+2. The API key is mapped to an `org_id` in the `api_keys` table
+3. Before executing any query, the database session variable `app.current_org_id` is set
+4. RLS policies on every table filter rows to `WHERE org_id = current_setting('app.current_org_id')`
+
+```sql
+-- Simplified RLS policy (applied to all memory tables)
+CREATE POLICY org_isolation ON memories
+    USING (org_id = current_setting('app.current_org_id')::uuid);
+```
+
+<Note>
+RLS is enforced even for raw SQL queries. If a developer connects directly to the database, they must set `app.current_org_id` or they will see zero rows. The superuser role bypasses RLS for administrative tasks only.
+</Note>
+
+## API Key to Organisation Mapping
+
+Every API key is bound to exactly one organisation. When you create an API key, it is permanently associated with an `org_id`.
+
+```
+API Key: z3rno_sk_prod_a1b2c3d4...
+  → org_id: 550e8400-e29b-41d4-a716-446655440000
+  → permissions: [read, write, delete]
+  → rate_limit: 1000 req/min
+```
+
+API keys support **scoped permissions**:
+
+| Permission | Allows |
+|---|---|
+| `read` | Recall memories |
+| `write` | Store and update memories |
+| `delete` | Soft and hard delete memories |
+| `admin` | Manage agents, users, and API keys within the org |
+
+You can create multiple API keys per organisation with different permission sets — for example, a read-only key for analytics and a full-access key for the agent runtime.
+
+## Zero Data Leakage Guarantee
+
+Z3rno's multi-tenancy model provides a **zero data leakage guarantee** through multiple layers:
+
+<CardGroup cols={2}>
+  <Card title="Database-Level Isolation" icon="database">
+    RLS policies are enforced by PostgreSQL itself. Application code cannot bypass them, even with SQL injection.
+  </Card>
+  <Card title="API Key Binding" icon="key">
+    Every request is authenticated and bound to an org_id before any query executes. No anonymous access.
+  </Card>
+  <Card title="Vector Index Isolation" icon="magnifying-glass">
+    pgvector similarity searches are always filtered by org_id. An embedding from Org A will never match a query from Org B.
+  </Card>
+  <Card title="Graph Isolation" icon="diagram-project">
+    Apache AGE graph traversals are scoped to the org's subgraph. Cross-org edges are structurally impossible.
+  </Card>
+</CardGroup>
+
+### What this means in practice
+
+- **Store:** A memory stored by Org A is invisible to Org B, even if they share the same PostgreSQL instance.
+- **Recall:** A vector similarity search by Org A will never return memories belonging to Org B, even if the embeddings are semantically identical.
+- **Forget:** A hard delete by Org A only cascades through Org A's data. Org B's data is untouched.
+- **Audit:** Audit logs are scoped to the organisation. Org A cannot see Org B's audit trail.
+
+<Warning>
+The superuser PostgreSQL role bypasses RLS by design. In production, application connections should **never** use the superuser role. Z3rno's connection pool uses a dedicated `z3rno_app` role with RLS enforced.
+</Warning>

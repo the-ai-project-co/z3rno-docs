@@ -1,0 +1,207 @@
+---
+title: Kubernetes
+description: "Deploy Z3rno on Kubernetes using the official Helm chart."
+---
+
+# Kubernetes
+
+Deploy Z3rno on Kubernetes for high availability, auto-scaling, and production-grade operations using the official Helm chart.
+
+## Prerequisites
+
+- **Kubernetes** 1.27+
+- **Helm** 3.16+
+- **kubectl** configured for your cluster
+- A PostgreSQL database (managed or self-hosted with pgvector and Apache AGE)
+
+## Install with Helm
+
+Add the Z3rno Helm repository and install the chart:
+
+```bash
+helm repo add z3rno https://the-ai-project-co.github.io/z3rno-helm
+helm repo update
+
+# Install with default values
+helm install z3rno z3rno/z3rno -n z3rno-system --create-namespace
+
+# Or install from source
+git clone https://github.com/the-ai-project-co/z3rno-helm
+helm install z3rno ./z3rno-helm/charts/z3rno -n z3rno-system --create-namespace
+```
+
+Verify the deployment:
+
+```bash
+kubectl get pods -n z3rno-system
+kubectl get svc -n z3rno-system
+```
+
+## Configuration reference
+
+Override defaults by passing a custom values file:
+
+```bash
+helm install z3rno z3rno/z3rno -n z3rno-system -f my-values.yaml
+```
+
+### Key values
+
+| Key | Default | Description |
+|---|---|---|
+| `server.replicas` | `2` | Number of API server pods |
+| `server.image.tag` | `latest` | Server image tag |
+| `server.port` | `8000` | Container port |
+| `server.resources.requests.memory` | `256Mi` | Memory request |
+| `server.resources.limits.memory` | `512Mi` | Memory limit |
+| `worker.enabled` | `true` | Enable Celery worker |
+| `worker.replicas` | `1` | Number of worker pods |
+| `valkey.enabled` | `true` | Enable bundled Valkey |
+| `valkey.persistence.size` | `1Gi` | Valkey PVC size |
+| `ingress.enabled` | `false` | Enable Ingress |
+| `autoscaling.enabled` | `false` | Enable HPA |
+| `autoscaling.minReplicas` | `2` | Minimum server replicas |
+| `autoscaling.maxReplicas` | `10` | Maximum server replicas |
+
+See the full [`values.yaml`](https://github.com/the-ai-project-co/z3rno-helm/blob/main/charts/z3rno/values.yaml) for all options.
+
+## External database
+
+For production, use a managed PostgreSQL service instead of a bundled database. Create a Kubernetes Secret with your connection string:
+
+```bash
+kubectl create secret generic z3rno-db \
+  --from-literal=password='your-db-password' \
+  -n z3rno-system
+```
+
+Then configure the chart:
+
+```yaml
+# values-prod.yaml
+externalDatabase:
+  enabled: true
+  host: your-rds-instance.region.rds.amazonaws.com
+  port: 5432
+  name: z3rno
+  user: z3rno
+  existingSecret: z3rno-db
+  secretKey: password
+```
+
+<Warning>
+Your external PostgreSQL instance must have the `pgvector` and `Apache AGE` extensions installed.
+</Warning>
+
+## External Redis
+
+Replace the bundled Valkey with a managed Redis service:
+
+```yaml
+# values-prod.yaml
+valkey:
+  enabled: false
+
+externalRedis:
+  enabled: true
+  host: your-elasticache.region.cache.amazonaws.com
+  port: 6379
+  existingSecret: z3rno-redis
+  secretKey: redis-password
+```
+
+## Ingress and TLS
+
+Enable Ingress with TLS using cert-manager:
+
+```yaml
+# values-prod.yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: z3rno.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: z3rno-tls
+      hosts:
+        - z3rno.example.com
+```
+
+Make sure you have an Ingress controller (nginx, Traefik, etc.) and cert-manager installed in your cluster.
+
+## Auto-scaling
+
+Enable the Horizontal Pod Autoscaler to scale server pods based on resource usage:
+
+```yaml
+# values-prod.yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+```
+
+<Note>
+When `autoscaling.enabled` is `true`, the `server.replicas` value is ignored. The HPA manages replica count.
+</Note>
+
+## Monitoring
+
+Z3rno exposes Prometheus metrics at `/metrics`. Use the Prometheus Operator or a standalone Prometheus to scrape metrics:
+
+```yaml
+# ServiceMonitor (requires Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: z3rno
+  namespace: z3rno-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: z3rno
+      app.kubernetes.io/component: server
+  endpoints:
+    - port: http
+      interval: 15s
+      path: /metrics
+```
+
+## Upgrading
+
+Upgrade to a new chart or app version:
+
+```bash
+helm repo update
+helm upgrade z3rno z3rno/z3rno -n z3rno-system -f my-values.yaml
+```
+
+Check rollout status:
+
+```bash
+kubectl rollout status deployment -n z3rno-system
+```
+
+Roll back if needed:
+
+```bash
+helm rollback z3rno -n z3rno-system
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose" icon="docker" href="/self-hosting/docker-compose">
+    Simpler single-machine deployment for development and small workloads.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/self-hosting/configuration">
+    Full environment variable reference for all Z3rno settings.
+  </Card>
+</CardGroup>

@@ -1,0 +1,160 @@
+---
+title: Memory Types
+description: "Understand Z3rno's four-tier memory model: working, episodic, semantic, and procedural."
+---
+
+# Memory Types
+
+Z3rno implements a biologically-inspired four-tier memory model. Each tier has distinct storage characteristics, access patterns, and retention policies — just like human memory.
+
+## Working Memory
+
+Working memory holds the **ephemeral context for the current task**. It is session-scoped, meaning it is created when a session starts and discarded when the session ends.
+
+- **Storage:** Redis (in-memory)
+- **Latency:** Sub-millisecond (<1ms)
+- **Retention:** Auto-expires when the session ends or after a configurable idle timeout
+- **Use case:** Tracking the current conversation turn, intermediate reasoning steps, tool call results
+
+```python
+# Working memory is created automatically within a session
+client.store(
+    agent_id="agent-1",
+    content="User is asking about pricing for the Pro plan.",
+    memory_type="working",
+    session_id="sess_abc123",
+)
+```
+
+<Note>
+Working memory is **not persisted to PostgreSQL**. If the server restarts, working memory is lost. This is by design — it mirrors how human working memory is volatile.
+</Note>
+
+## Episodic Memory
+
+Episodic memory stores **conversation history and event sequences**. Think of it as the agent's autobiographical memory — what happened, when, and in what order.
+
+- **Storage:** PostgreSQL with temporal indexing
+- **Latency:** Low single-digit milliseconds
+- **Retention:** Configurable TTL (default: 30 days). Older episodes decay based on importance score.
+- **Use case:** Conversation logs, interaction history, temporal queries ("what did we discuss last Tuesday?")
+
+```python
+# Episodic memories are typically stored automatically by the session manager
+# You can also store them explicitly:
+client.store(
+    agent_id="agent-1",
+    content="User asked about upgrading from Free to Pro plan. I provided the comparison table.",
+    memory_type="episodic",
+    metadata={"topic": "pricing", "sentiment": "positive"},
+)
+```
+
+Episodic memories support **temporal queries** — you can ask for memories within a specific time range:
+
+```python
+results = client.recall(
+    agent_id="agent-1",
+    query="pricing conversations",
+    memory_type="episodic",
+    time_range={"start": "2026-03-01", "end": "2026-03-31"},
+)
+```
+
+## Semantic Memory
+
+Semantic memory stores **facts, knowledge, and user preferences**. This is the agent's long-term knowledge base — things it has learned that are true regardless of when they were learned.
+
+- **Storage:** PostgreSQL with pgvector (vector similarity search)
+- **Latency:** Single-digit milliseconds (vector index lookup)
+- **Retention:** Long-lived. No default TTL. Decays only when explicitly superseded or forgotten.
+- **Use case:** User preferences, learned facts, domain knowledge, entity attributes
+
+```python
+client.store(
+    agent_id="agent-1",
+    content="User is on the Pro plan, based in London, prefers metric units.",
+    memory_type="semantic",
+    metadata={"category": "user_profile"},
+)
+
+# Recall via natural language — pgvector finds semantically similar memories
+results = client.recall(
+    agent_id="agent-1",
+    query="What plan is the user on?",
+    memory_type="semantic",
+    top_k=3,
+)
+```
+
+<Note>
+Semantic memories are automatically embedded using the configured embedding model. You do not need to provide vectors — Z3rno handles embedding at write time.
+</Note>
+
+## Procedural Memory
+
+Procedural memory stores **learned behaviours, workflow patterns, and decision rules**. This is the agent's "muscle memory" — how to do things, not what things are.
+
+- **Storage:** PostgreSQL with Apache AGE (graph relationships)
+- **Latency:** Low single-digit milliseconds (graph traversal)
+- **Retention:** Permanent. Procedural memories are never auto-expired.
+- **Use case:** Learned workflows, decision trees, behavioural patterns, tool usage sequences
+
+```python
+client.store(
+    agent_id="agent-1",
+    content="When user asks about pricing, always start with the value proposition before showing numbers.",
+    memory_type="procedural",
+    metadata={"trigger": "pricing_inquiry", "confidence": 0.92},
+)
+```
+
+Procedural memories form a **graph structure** — they can reference other memories, creating chains of behaviour:
+
+```python
+results = client.recall(
+    agent_id="agent-1",
+    query="How should I handle a pricing question?",
+    memory_type="procedural",
+    traverse_depth=2,  # Follow graph edges up to 2 hops
+)
+```
+
+## Comparison
+
+| | Working | Episodic | Semantic | Procedural |
+|---|---|---|---|---|
+| **Scope** | Current session | Past sessions | All time | All time |
+| **Lifespan** | Session duration | Configurable TTL | Long-lived | Permanent |
+| **Storage** | Redis | PostgreSQL | PostgreSQL + pgvector | PostgreSQL + Apache AGE |
+| **Access pattern** | Key lookup | Temporal query | Vector similarity | Graph traversal |
+| **Latency** | <1ms | ~2-5ms | ~5-10ms | ~5-15ms |
+| **Auto-created** | Yes (session) | Yes (session end) | No (explicit or promotion) | No (explicit or learning) |
+| **Example** | "User just said hello" | "User chatted about pricing on March 15" | "User prefers dark mode" | "Always greet returning users by name" |
+
+## When to use each type
+
+<CardGroup cols={2}>
+  <Card title="Working" icon="bolt">
+    Use for **real-time context** that only matters during the current interaction. Shopping cart contents, multi-step form state, in-progress tool calls.
+  </Card>
+  <Card title="Episodic" icon="clock-rotate-left">
+    Use for **conversation history** and event logs. When the agent needs to reference what happened in a previous session or answer "when did we last discuss X?"
+  </Card>
+  <Card title="Semantic" icon="brain">
+    Use for **facts and preferences** that persist across sessions. User profiles, learned knowledge, entity attributes. Anything the agent should "just know."
+  </Card>
+  <Card title="Procedural" icon="diagram-project">
+    Use for **behavioural patterns** the agent has learned. Workflow optimisations, decision rules, tool usage sequences. Anything that changes how the agent acts.
+  </Card>
+</CardGroup>
+
+## Memory transitions
+
+Memories naturally flow between tiers:
+
+1. **Working → Episodic:** When a session ends, relevant working memories are consolidated into episodic memories.
+2. **Episodic → Semantic:** Repeated patterns across episodes are summarised and promoted to semantic memory.
+3. **Episodic → Procedural:** Learned behaviours extracted from episode sequences are stored as procedural memory.
+
+These transitions can happen automatically (via the memory lifecycle engine) or explicitly (via API calls). See [Memory Lifecycle](/concepts/memory-lifecycle) for details.
