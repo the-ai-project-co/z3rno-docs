@@ -1,7 +1,6 @@
 ---
-title: "Memory Types"
+title: Memory Types
 description: "Understand Z3rno's four-tier memory model: working, episodic, semantic, and procedural."
-sidebarTitle: "Memory Types"
 ---
 
 # Memory Types
@@ -13,7 +12,7 @@ Z3rno implements a biologically-inspired four-tier memory model. Each tier has d
 Working memory holds the **ephemeral context for the current task**. It is session-scoped, meaning it is created when a session starts and discarded when the session ends.
 
 - **Storage:** Redis (in-memory)
-- **Latency:** Sub-millisecond (<1ms)
+- **Latency:** Sub-millisecond (under 1ms)
 - **Retention:** Auto-expires when the session ends or after a configurable idle timeout
 - **Use case:** Tracking the current conversation turn, intermediate reasoning steps, tool call results
 
@@ -129,7 +128,7 @@ results = client.recall(
 | **Lifespan** | Session duration | Configurable TTL | Long-lived | Permanent |
 | **Storage** | Redis | PostgreSQL | PostgreSQL + pgvector | PostgreSQL + Apache AGE |
 | **Access pattern** | Key lookup | Temporal query | Vector similarity | Graph traversal |
-| **Latency** | <1ms | ~2-5ms | ~5-10ms | ~5-15ms |
+| **Latency** | under 1ms | ~2-5ms | ~5-10ms | ~5-15ms |
 | **Auto-created** | Yes (session) | Yes (session end) | No (explicit or promotion) | No (explicit or learning) |
 | **Example** | "User just said hello" | "User chatted about pricing on March 15" | "User prefers dark mode" | "Always greet returning users by name" |
 
