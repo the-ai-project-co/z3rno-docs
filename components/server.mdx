@@ -68,7 +68,7 @@ X-RateLimit-Reset: 1706140800
 
 ## Celery Workers
 
-Background tasks are processed by Celery workers with Redis as the broker:
+Background tasks are processed by Celery workers with Valkey as the broker:
 
 | Task | Schedule | Description |
 |---|---|---|
@@ -89,7 +89,7 @@ Environment variables:
 ```bash
 # Required
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/z3rno
-REDIS_URL=redis://localhost:6379/0
+VALKEY_URL=redis://localhost:6379/0
 
 # Optional
 Z3RNO_EMBEDDING_MODEL=text-embedding-3-small   # OpenAI model
@@ -108,7 +108,7 @@ cd z3rno-server
 uv sync
 
 # Start dependencies
-docker compose up -d postgres redis
+docker compose up -d postgres valkey
 
 # Run migrations
 alembic upgrade head

@@ -136,7 +136,7 @@ Z3rno requires **PostgreSQL 15+** with the following extensions:
 - **Apache AGE** for graph relationships
 - **Standard PostgreSQL** for temporal versioning (SCD Type 2)
 
-Redis is used optionally for working memory caching but is not strictly required.
+Valkey is used optionally for working memory caching but is not strictly required.
 
 ### 2. Can I use Z3rno without self-hosting?
 
@@ -172,7 +172,7 @@ Use hard delete to permanently purge all data for a user:
 client.forget_all(agent_id="agent-1", user_id="user-to-delete", hard=True)
 ```
 
-This cascades through PostgreSQL, pgvector, Apache AGE, and Redis. The audit log entry is retained but content is scrubbed.
+This cascades through PostgreSQL, pgvector, Apache AGE, and Valkey. The audit log entry is retained but content is scrubbed.
 
 ### 8. Does Z3rno support streaming or real-time updates?
 

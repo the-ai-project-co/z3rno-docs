@@ -5,7 +5,7 @@ description: "Deploy Z3rno on Kubernetes with Helm"
 
 ## Overview
 
-`z3rno-helm` is a Helm chart that deploys the full Z3rno stack on Kubernetes: the API server, PostgreSQL with extensions, Redis, and Celery workers.
+`z3rno-helm` is a Helm chart that deploys the full Z3rno stack on Kubernetes: the API server, PostgreSQL with extensions, Valkey, and Celery workers.
 
 ```bash
 helm repo add z3rno https://charts.z3rno.dev
@@ -19,7 +19,7 @@ helm install z3rno z3rno/z3rno --namespace z3rno --create-namespace
 |---|---|---|
 | `z3rno-server` | 2 | FastAPI application (Deployment) |
 | `postgresql` | 1 | PostgreSQL 17 + pgvector + AGE + pg_cron (StatefulSet) |
-| `redis` | 1 | Celery broker + rate limit store (Deployment) |
+| `valkey` | 1 | Celery broker + rate limit store (Deployment) |
 | `celery-worker` | 1 | Background task processor (Deployment) |
 | `celery-beat` | 1 | Periodic task scheduler (Deployment) |
 
@@ -75,8 +75,8 @@ externalDatabase:
   user: "z3rno"
   existingSecret: ""       # Secret with key "password"
 
-# Redis
-redis:
+# Valkey
+valkey:
   enabled: true
   storage: 1Gi
 

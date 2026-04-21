@@ -163,7 +163,7 @@ Permanently removes a memory and **all associated data** from every storage laye
 1. PostgreSQL row deleted (not just flagged)
 2. Vector embedding removed from pgvector index
 3. Graph nodes and edges removed from Apache AGE
-4. Redis cache entry evicted
+4. Valkey cache entry evicted
 5. Audit log entry marked as `hard_deleted` (the log entry itself is retained, but the memory content is scrubbed)
 
 ```python

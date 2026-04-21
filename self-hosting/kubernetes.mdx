@@ -93,21 +93,21 @@ externalDatabase:
 Your external PostgreSQL instance must have the `pgvector` and `Apache AGE` extensions installed.
 </Warning>
 
-## External Redis
+## External Valkey
 
-Replace the bundled Valkey with a managed Redis service:
+Replace the bundled Valkey with a managed Valkey service (e.g., ElastiCache):
 
 ```yaml
 # values-prod.yaml
 valkey:
   enabled: false
 
-externalRedis:
+externalValkey:
   enabled: true
   host: your-elasticache.region.cache.amazonaws.com
   port: 6379
-  existingSecret: z3rno-redis
-  secretKey: redis-password
+  existingSecret: z3rno-valkey
+  secretKey: valkey-password
 ```
 
 ## Ingress and TLS

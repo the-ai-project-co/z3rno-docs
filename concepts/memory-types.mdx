@@ -11,7 +11,7 @@ Z3rno implements a biologically-inspired four-tier memory model. Each tier has d
 
 Working memory holds the **ephemeral context for the current task**. It is session-scoped, meaning it is created when a session starts and discarded when the session ends.
 
-- **Storage:** Redis (in-memory)
+- **Storage:** Valkey (in-memory)
 - **Latency:** Sub-millisecond
 - **Retention:** Auto-expires when the session ends or after a configurable idle timeout
 - **Use case:** Tracking the current conversation turn, intermediate reasoning steps, tool call results
@@ -87,7 +87,7 @@ client.store(
 
 | Tier | Scope | Lifespan | Storage | Access Pattern | Latency |
 |---|---|---|---|---|---|
-| **Working** | Current session | Session duration | Redis | Key lookup | Sub-ms |
+| **Working** | Current session | Session duration | Valkey | Key lookup | Sub-ms |
 | **Episodic** | Past sessions | Configurable TTL | PostgreSQL | Temporal query | 2-5ms |
 | **Semantic** | All time | Long-lived | PostgreSQL + pgvector | Vector similarity | 5-10ms |
 | **Procedural** | All time | Permanent | PostgreSQL + AGE | Graph traversal | 5-15ms |

@@ -22,14 +22,14 @@ Z3rno is configured entirely through environment variables. This page documents 
 The PostgreSQL instance must have `pgvector` and `Apache AGE` extensions installed and enabled. Z3rno runs `CREATE EXTENSION IF NOT EXISTS` on startup.
 </Warning>
 
-## Redis / Valkey
+## Valkey
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis or Valkey connection URL |
-| `REDIS_MAX_CONNECTIONS` | `20` | Maximum connections in the Redis pool |
-| `CELERY_BROKER_URL` | Same as `REDIS_URL` | Celery task broker URL (defaults to `REDIS_URL` if not set) |
-| `CELERY_RESULT_BACKEND` | Same as `REDIS_URL` | Celery result backend URL |
+| `VALKEY_URL` | `redis://localhost:6379/0` | Valkey connection URL (falls back to `REDIS_URL` for backward compat) |
+| `VALKEY_MAX_CONNECTIONS` | `20` | Maximum connections in the Valkey pool |
+| `CELERY_BROKER_URL` | Same as `VALKEY_URL` | Celery task broker URL (defaults to `VALKEY_URL` if not set) |
+| `CELERY_RESULT_BACKEND` | Same as `VALKEY_URL` | Celery result backend URL |
 
 ## Embedding
 
@@ -64,7 +64,7 @@ When switching embedding providers or models, you must re-embed all existing mem
 | `RATE_LIMIT_REQUESTS` | `100` | Maximum requests per window |
 | `RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
 | `RATE_LIMIT_BURST` | `20` | Burst allowance above the steady rate |
-| `RATE_LIMIT_BACKEND` | `redis` | Rate limit storage: `redis` or `memory` |
+| `RATE_LIMIT_BACKEND` | `valkey` | Rate limit storage: `valkey` or `memory` |
 
 ## Memory lifecycle
 
@@ -98,8 +98,8 @@ When switching embedding providers or models, you must re-embed all existing mem
 DATABASE_URL=postgresql://z3rno:changeme@postgres:5432/z3rno
 DATABASE_POOL_SIZE=20
 
-# Redis
-REDIS_URL=redis://valkey:6379/0
+# Valkey
+VALKEY_URL=redis://valkey:6379/0
 
 # Embedding
 EMBEDDING_PROVIDER=openai
