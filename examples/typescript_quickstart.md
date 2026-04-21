@@ -69,7 +69,7 @@ console.log(`Stored preference: ${prefMemory.id}`);
 
 const techMemory = await client.store({
   agentId: AGENT_ID,
-  content: "The team's production stack is Next.js 14, PostgreSQL 16, and Redis 7.",
+  content: "The team's production stack is Next.js 14, PostgreSQL 16, and Valkey 8.",
   memoryType: "semantic",
   metadata: { source: "onboarding-doc", team: "platform" },
 });

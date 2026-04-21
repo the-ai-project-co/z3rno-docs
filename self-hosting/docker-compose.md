@@ -60,7 +60,7 @@ This starts four containers:
 | `z3rno-server` | 8000 | FastAPI application server |
 | `z3rno-worker` | -- | Celery background worker |
 | `postgres` | 5432 | PostgreSQL 17 with pgvector, pgvectorscale, Apache AGE, pg_cron, pgaudit |
-| `valkey` | 6379 | Valkey 8 (Redis-compatible) for cache, sessions, rate limiting, Celery broker |
+| `valkey` | 6379 | Valkey 8 (Redis-protocol-compatible) for cache, sessions, rate limiting, Celery broker |
 
 ### 4. Verify health
 

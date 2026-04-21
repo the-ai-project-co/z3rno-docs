@@ -34,7 +34,7 @@
           "health"
         ],
         "summary": "Ready",
-        "description": "Readiness probe \u2014 checks database and Redis connectivity.",
+        "description": "Readiness probe \u2014 checks database and Valkey connectivity.",
         "operationId": "ready_v1_ready_get",
         "responses": {
           "200": {
@@ -698,7 +698,7 @@
           "sessions"
         ],
         "summary": "Start a new session",
-        "description": "Start a new session. Stores session state in Redis with 24h TTL.",
+        "description": "Start a new session. Stores session state in Valkey with 24h TTL.",
         "operationId": "start_session_v1_sessions_post",
         "requestBody": {
           "content": {
@@ -784,7 +784,7 @@
           "sessions"
         ],
         "summary": "Get session state",
-        "description": "Get the current state of a session from Redis.",
+        "description": "Get the current state of a session from Valkey.",
         "operationId": "get_session_v1_sessions__session_id__get",
         "parameters": [
           {
@@ -1450,7 +1450,7 @@
           },
           "redis": {
             "type": "string",
-            "title": "Redis",
+            "title": "Valkey",
             "default": "unknown"
           }
         },

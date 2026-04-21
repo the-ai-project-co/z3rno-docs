@@ -110,15 +110,15 @@ externalDatabase:
   secretKey: password
 ```
 
-### External Redis
+### External Valkey
 
-Replace the bundled Valkey with a managed Redis service:
+Replace the bundled Valkey with a managed Valkey service:
 
 ```yaml
 valkey:
   enabled: false
 
-externalRedis:
+externalValkey:
   enabled: true
   host: your-elasticache.region.cache.amazonaws.com
   port: 6379
