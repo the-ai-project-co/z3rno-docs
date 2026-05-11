@@ -24,7 +24,7 @@ The verb names are deliberately Z3rno-native — they're built from how the syst
 The seven verbs split naturally into two layers:
 
 - **Primary** (`store`, `recall`, `forget`, `audit`) — the day-one Z3rno surface every SDK has supported since v0.1.0.
-- **Forge** (`ingest`, `distill`, `refine`) — the structure-building layer added in Phases A–D. Today these are HTTP-only; SDK wrappers ship as part of Phase E.
+- **Forge** (`ingest`, `distill`, `refine`) — the structure-building layer added in Phases A–D. SDK wrappers landed in v0.4.0 (Python + TypeScript).
 
 ## When to Use Which
 
@@ -139,19 +139,29 @@ The audit table carries an immutability trigger (Migration 014) so even a privil
 
 `ingest` is the Forge's front door. Text, URLs, files (PDF / DOCX / CSV / Markdown / code / image / audio), and Tavily-driven search results all land here.
 
-```bash
-# Text + URL ingest
-curl -X POST https://api.z3rno.dev/v1/ingest \
-  -H "Authorization: Bearer sk-..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "kind": "url",
-    "agent_id": "agent-1",
-    "url": "https://example.com/doc.html",
-    "dataset_id": "01HXYZ..."
-  }'
+```python
+# Text or URL ingest
+job = client.ingest_text(agent_id="agent-1", text="Long-form memo body…", dataset_id="01HXYZ...")
+# or
+job = client.ingest_url(agent_id="agent-1", url="https://example.com/doc.html", dataset_id="01HXYZ...")
 
-# File upload
+status = client.get_ingest_status(job.job_id)
+```
+
+```typescript
+// Text or URL ingest
+const job = await client.ingestText({
+  agentId: "agent-1",
+  text: "Long-form memo body…",
+  datasetId: "01HXYZ...",
+});
+
+const status = await client.getIngestStatus(job.job_id);
+```
+
+For file uploads, use the multipart endpoint directly (not yet wrapped in the SDKs):
+
+```bash
 curl -X POST https://api.z3rno.dev/v1/ingest/file \
   -H "Authorization: Bearer sk-..." \
   -F "agent_id=agent-1" \
@@ -167,16 +177,20 @@ Operator reference: [PHASE-B1-IMPLEMENTATION.md](https://github.com/the-ai-proje
 
 `distill` runs the Forge: chunks the stored memories, runs LLM-driven entity + relationship extraction, and writes typed `Memo` graph nodes and edges. Idempotent — re-running over already-distilled memories is a no-op.
 
-```bash
-curl -X POST https://api.z3rno.dev/v1/distill \
-  -H "Authorization: Bearer sk-..." \
-  -d '{
-    "agent_id": "agent-1",
-    "memory_ids": ["01HXY1...", "01HXY2..."]
-  }'
+```python
+job = client.distill(agent_id="agent-1", memory_ids=["01HXY1...", "01HXY2..."])
+status = client.get_distill_status(job.job_id)
 ```
 
-Returns `202` + `job_id`; poll `GET /v1/distill/{job_id}` for status.
+```typescript
+const job = await client.distill({
+  agentId: "agent-1",
+  memoryIds: ["01HXY1...", "01HXY2..."],
+});
+const status = await client.getDistillStatus(job.job_id);
+```
+
+Returns `202` + `job_id`; poll `get_distill_status` for the final state.
 
 Operator reference: [PHASE-A-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-A-IMPLEMENTATION.md).
 
@@ -190,10 +204,14 @@ Operator reference: [PHASE-A-IMPLEMENTATION.md](https://github.com/the-ai-projec
 4. **reweight** — drain the `feedback` table, EMA-blend edge weights from accumulated +1/0/-1 signals.
 5. **prune** — drop edges that have decayed below threshold.
 
-```bash
-curl -X POST https://api.z3rno.dev/v1/refine \
-  -H "Authorization: Bearer sk-..." \
-  -d '{"dataset_id": "01HXYZ..."}'
+```python
+job = client.refine(dataset_id="01HXYZ...")
+status = client.get_refine_status(job.job_id)
+```
+
+```typescript
+const job = await client.refine({ datasetId: "01HXYZ..." });
+const status = await client.getRefineStatus(job.job_id);
 ```
 
 Refine pairs with `POST /v1/feedback` — agents (or eval harnesses) post signals there; refine drains them into edge weight updates. Together they make the graph learn from how it's actually used.
@@ -208,11 +226,11 @@ Operator reference: [PHASE-D-IMPLEMENTATION.md](https://github.com/the-ai-projec
 | `recall` | ✅ | ✅ | ✅ |
 | `forget` | ✅ | ✅ | ✅ |
 | `audit` | ✅ | ✅ | ✅ |
-| `ingest` | — *(Phase E)* | — *(Phase E)* | ✅ |
-| `distill` | — *(Phase E)* | — *(Phase E)* | ✅ |
-| `refine` | — *(Phase E)* | — *(Phase E)* | ✅ |
+| `ingest` | ✅ *(0.4.0+)* | ✅ *(0.4.0+)* | ✅ |
+| `distill` | ✅ *(0.4.0+)* | ✅ *(0.4.0+)* | ✅ |
+| `refine` | ✅ *(0.4.0+)* | ✅ *(0.4.0+)* | ✅ |
 
-The Forge verbs (`ingest` / `distill` / `refine`) are operator-flagged on the server (`INGEST_ENABLED`, `DISTILL_ENABLED`, `REFINE_ENABLED`) and dormant by default. Until they're enabled, those routes are not even registered — OpenAPI byte-identical, calls return 404.
+The Forge verbs (`ingest` / `distill` / `refine`) are operator-flagged on the server (`INGEST_ENABLED`, `DISTILL_ENABLED`, `REFINE_ENABLED`) and dormant by default. Until they're enabled, those routes are not even registered — OpenAPI byte-identical, SDK calls raise `NotFoundError`.
 
 ## Why These Verbs
 
