@@ -64,6 +64,7 @@
         "group": "Core Concepts",
         "pages": [
           "core-concepts",
+          "concepts/verbs",
           "concepts/memory-types",
           "concepts/memory-lifecycle",
           "concepts/multi-tenancy",

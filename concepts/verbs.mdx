@@ -1,0 +1,226 @@
+---
+title: The Z3rno Verbs
+description: "The seven canonical verbs that make up the Z3rno public API."
+---
+
+# The Z3rno Verbs
+
+Z3rno's public API is built around **seven verbs**. Together they cover the entire lifecycle of an agent's memory — from accepting raw input, through extracting structure, retrieving relevant context, improving the graph over time, and proving what happened when. Every other endpoint composes these seven primitives.
+
+The verb names are deliberately Z3rno-native — they're built from how the system actually thinks about memory, not borrowed from any external vocabulary.
+
+## Verb Table
+
+| Verb | Endpoint | Method | Purpose |
+|---|---|---|---|
+| **`store`** | `/v1/memories` | `POST` | Write a memory directly. The lowest-level primitive — bytes in, Memo out. |
+| **`recall`** | `/v1/memories/recall` | `POST` | Retrieve relevant memories for a query. Defaults to `strategy=AUTO`. |
+| **`forget`** | `/v1/memories/forget` | `POST` | Soft-delete one or more memories. SCD-2 preserves the audit trail. |
+| **`audit`** | `/v1/audit` | `GET` | Inspect the immutable audit log — who did what, when, with what. |
+| **`ingest`** | `/v1/ingest` | `POST` | Accept raw input (text, URL, file, multimodal) into the Forge. |
+| **`distill`** | `/v1/distill` | `POST` | Build or extend the knowledge graph from stored memories. |
+| **`refine`** | `/v1/refine` | `POST` | Improve the graph in place — dedupe, infer edges, summarize, reweight. |
+
+The seven verbs split naturally into two layers:
+
+- **Primary** (`store`, `recall`, `forget`, `audit`) — the day-one Z3rno surface every SDK has supported since v0.1.0.
+- **Forge** (`ingest`, `distill`, `refine`) — the structure-building layer added in Phases A–D. Today these are HTTP-only; SDK wrappers ship as part of Phase E.
+
+## When to Use Which
+
+A typical agent integration uses three of the seven verbs in a tight loop:
+
+```
+turn N        → recall (give me what I knew)
+agent acts    → ...
+turn N → N+1  → store (remember what just happened)
+```
+
+The remaining four verbs come in as the system matures:
+
+| You want to... | Reach for |
+|---|---|
+| Hand Z3rno a PDF, URL, or transcript and have it figured out for you | `ingest` |
+| Turn unstructured memory into a queryable knowledge graph | `distill` |
+| Keep the graph clean as it grows: merge dupes, infer missing edges, summarize clusters | `refine` |
+| Remove a specific memory (right-to-be-forgotten, retention sweep) | `forget` |
+| Prove to a regulator or yourself what an agent saw and did | `audit` |
+
+## `store` — Write a Memory
+
+```python
+from z3rno import Z3rnoClient
+
+client = Z3rnoClient(api_key="sk-...")
+
+memory = client.store(
+    agent_id="agent-1",
+    content="User prefers dark mode and weekly digest emails.",
+    memory_type="semantic",
+    metadata={"source": "settings-page"},
+)
+```
+
+```typescript
+import { Z3rnoClient } from "@z3rno/sdk";
+
+const client = new Z3rnoClient({ apiKey: "sk-..." });
+
+const memory = await client.store({
+  agent_id: "agent-1",
+  content: "User prefers dark mode and weekly digest emails.",
+  memory_type: "semantic",
+  metadata: { source: "settings-page" },
+});
+```
+
+See: [Memory Types](/concepts/memory-types), [Multi-Tenancy](/concepts/multi-tenancy).
+
+## `recall` — Retrieve Memories
+
+`recall` defaults to `strategy=AUTO` — an LLM routes the query to one of ten retrieval strategies (`VECTOR`, `LEXICAL`, `GRAPH`, `TRIPLET`, `TRACE`, `TEMPORAL`, `ASK`, `CYPHER`, `CODE`, plus `AUTO` itself) based on its shape. You can also pin a strategy explicitly.
+
+```python
+results = client.recall(
+    agent_id="agent-1",
+    query="What does the user prefer for notifications?",
+    top_k=5,
+    # strategy="AUTO" by default; pin to "GRAPH" for relational queries.
+)
+```
+
+```typescript
+const results = await client.recall({
+  agent_id: "agent-1",
+  query: "What does the user prefer for notifications?",
+  top_k: 5,
+});
+```
+
+See: the full retrieval surface in [PHASE-C-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-C-IMPLEMENTATION.md).
+
+## `forget` — Soft-Delete
+
+`forget` performs an SCD-2 soft delete: the row is closed (`valid_to = now()`, `deleted_at = now()`) but historical versions remain visible to `audit`. There is no destructive `DELETE` in the public surface.
+
+```python
+client.forget(memory_id="01HXYZ...")
+```
+
+```typescript
+await client.forget({ memory_id: "01HXYZ..." });
+```
+
+See: [Temporal Versioning](/concepts/temporal-versioning).
+
+## `audit` — Inspect the Trail
+
+Every `store`, `recall`, `forget`, `ingest`, `distill`, and `refine` writes one or more rows to the immutable audit log. `audit` queries it with the usual filters.
+
+```python
+events = client.audit(
+    agent_id="agent-1",
+    operation="forget",
+    since="2026-01-01T00:00:00Z",
+)
+```
+
+```typescript
+const events = await client.audit({
+  agent_id: "agent-1",
+  operation: "forget",
+  since: "2026-01-01T00:00:00Z",
+});
+```
+
+The audit table carries an immutability trigger (Migration 014) so even a privileged DB role cannot rewrite history.
+
+## `ingest` — Accept Raw Input
+
+`ingest` is the Forge's front door. Text, URLs, files (PDF / DOCX / CSV / Markdown / code / image / audio), and Tavily-driven search results all land here.
+
+```bash
+# Text + URL ingest
+curl -X POST https://api.z3rno.dev/v1/ingest \
+  -H "Authorization: Bearer sk-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "kind": "url",
+    "agent_id": "agent-1",
+    "url": "https://example.com/doc.html",
+    "dataset_id": "01HXYZ..."
+  }'
+
+# File upload
+curl -X POST https://api.z3rno.dev/v1/ingest/file \
+  -H "Authorization: Bearer sk-..." \
+  -F "agent_id=agent-1" \
+  -F "dataset_id=01HXYZ..." \
+  -F "file=@report.pdf"
+```
+
+When `INGEST_AUTO_DISTILL=true` (default) every successful ingest chains into `distill` automatically — drop in a PDF, get a graph.
+
+Operator reference: [PHASE-B1-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-B1-IMPLEMENTATION.md), [PHASE-B2-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-B2-IMPLEMENTATION.md).
+
+## `distill` — Build the Graph
+
+`distill` runs the Forge: chunks the stored memories, runs LLM-driven entity + relationship extraction, and writes typed `Memo` graph nodes and edges. Idempotent — re-running over already-distilled memories is a no-op.
+
+```bash
+curl -X POST https://api.z3rno.dev/v1/distill \
+  -H "Authorization: Bearer sk-..." \
+  -d '{
+    "agent_id": "agent-1",
+    "memory_ids": ["01HXY1...", "01HXY2..."]
+  }'
+```
+
+Returns `202` + `job_id`; poll `GET /v1/distill/{job_id}` for status.
+
+Operator reference: [PHASE-A-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-A-IMPLEMENTATION.md).
+
+## `refine` — Improve the Graph
+
+`refine` is the self-improvement loop. One refine pass executes:
+
+1. **dedupe** — merge Memos sharing an `ontology_uri` or `(memo_type, normalized_name)`. SCD-2 supersede preserves audit.
+2. **infer** *(opt-in)* — LLM proposes plausible edges between under-connected Memos.
+3. **summarize** *(opt-in)* — LLM emits one `SUMMARY` Memo per cluster, cached by cluster hash.
+4. **reweight** — drain the `feedback` table, EMA-blend edge weights from accumulated +1/0/-1 signals.
+5. **prune** — drop edges that have decayed below threshold.
+
+```bash
+curl -X POST https://api.z3rno.dev/v1/refine \
+  -H "Authorization: Bearer sk-..." \
+  -d '{"dataset_id": "01HXYZ..."}'
+```
+
+Refine pairs with `POST /v1/feedback` — agents (or eval harnesses) post signals there; refine drains them into edge weight updates. Together they make the graph learn from how it's actually used.
+
+Operator reference: [PHASE-D-IMPLEMENTATION.md](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/PHASE-D-IMPLEMENTATION.md).
+
+## SDK Coverage
+
+| Verb | Python SDK | TypeScript SDK | HTTP |
+|---|---|---|---|
+| `store` | ✅ | ✅ | ✅ |
+| `recall` | ✅ | ✅ | ✅ |
+| `forget` | ✅ | ✅ | ✅ |
+| `audit` | ✅ | ✅ | ✅ |
+| `ingest` | — *(Phase E)* | — *(Phase E)* | ✅ |
+| `distill` | — *(Phase E)* | — *(Phase E)* | ✅ |
+| `refine` | — *(Phase E)* | — *(Phase E)* | ✅ |
+
+The Forge verbs (`ingest` / `distill` / `refine`) are operator-flagged on the server (`INGEST_ENABLED`, `DISTILL_ENABLED`, `REFINE_ENABLED`) and dormant by default. Until they're enabled, those routes are not even registered — OpenAPI byte-identical, calls return 404.
+
+## Why These Verbs
+
+A few design choices worth calling out:
+
+- **No `update`.** Memories are SCD-2 versioned, so an "update" is really a `store` of a new version. The old row stays visible at its `valid_to` timestamp.
+- **No `delete`.** `forget` is soft by design. Z3rno keeps the audit trail intact; right-to-be-forgotten is enforced by RLS + retention policies, not by destructive deletes.
+- **No `query`.** `recall` covers semantic retrieval; the `ASK` and `CYPHER` strategies cover structured graph queries through the same endpoint.
+- **No `train`.** The graph improves through `refine`, not by retraining a model. Feedback signals → edge weight updates → better recall, all without LLM fine-tuning.
+
+This is the canonical surface. Everything else is either composition (e.g. agents stringing `recall` + `store` into chat loops) or operator plumbing (datasets, sessions, API keys, health probes).
