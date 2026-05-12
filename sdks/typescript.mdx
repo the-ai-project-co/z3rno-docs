@@ -72,7 +72,7 @@ const results = await client.recall({
   memoryType: "semantic",                 // optional filter
   timeRange: { start: "2026-03-01", end: "2026-03-31" },  // optional
   asOf: "2026-03-15T12:00:00Z",          // optional point-in-time
-  metadataFilter: { category: "preferences" },
+  filters: { category: "preferences" },
   conversationId: "conv_abc",            // scope to one conversation (Phase G)
   strategy: "VECTOR",                    // override AUTO; see verbs page
   role: "support_agent",                 // for redaction filter (Phase F slice 2)
