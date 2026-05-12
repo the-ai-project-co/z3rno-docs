@@ -1,13 +1,15 @@
 ---
 title: Quickstart
-description: "Install the SDK and store your first memory in under 5 minutes."
+description: "Install the SDK, run a Z3rno server locally, and store + recall your first memory in under five minutes."
 ---
 
 # Quickstart
 
-<Note>
-This page is a stub while the MVP is being built. The final quickstart will ship in Week 6 of Phase 1. For now, here is the shape of the developer experience we are targeting.
-</Note>
+This page walks you from zero to a working `store` → `recall` round-trip — first against a local Docker stack, then optionally with a conversation scope and an MCP host wired in.
+
+<Tip>
+Already running a Z3rno server? Skip to [step 3](#3-store-and-recall-your-first-memory).
+</Tip>
 
 ## 1. Install the SDK
 
@@ -23,16 +25,20 @@ npm install @z3rno/sdk
 
 </CodeGroup>
 
-## 2. Start a local Z3rno instance (optional)
+Both SDKs ship every server verb (`store` / `recall` / `forget` / `audit` / `ingest` / `distill` / `refine`) plus Phase G conversation memory and tenant self-management. See [Python SDK](/sdks/python) / [TypeScript SDK](/sdks/typescript) for the full method reference.
 
-If you want to run Z3rno locally instead of using the managed cloud:
+## 2. Run a Z3rno server locally
+
+The fastest path is the bundled `docker-compose.dev.yml` — it spins up Postgres (with pgvector + Apache AGE + pg_cron pre-compiled), Valkey, and the server in one command.
 
 ```bash
 git clone https://github.com/the-ai-project-co/z3rno-server
 cd z3rno-server
 docker compose -f docker-compose.dev.yml up
-# Server at http://localhost:8000
+# Server at http://localhost:8000 — dev API key: z3rno_sk_test_localdev
 ```
+
+For Kubernetes deploys, see [Self-hosting → Kubernetes](/self-hosting/kubernetes) and [Components → z3rno-helm](/components/helm).
 
 ## 3. Store and recall your first memory
 
@@ -42,7 +48,7 @@ docker compose -f docker-compose.dev.yml up
 from z3rno import Z3rnoClient
 
 client = Z3rnoClient(
-    base_url="http://localhost:8000",      # or https://api.z3rno.dev
+    base_url="http://localhost:8000",
     api_key="z3rno_sk_test_localdev",
 )
 
@@ -51,41 +57,43 @@ memory = client.store(
     agent_id="agent-1",
     content="User prefers dark mode and uses Python.",
     memory_type="semantic",
+    importance=0.85,
 )
+print("stored:", memory.id)
 
-# Recall memories
+# Recall — defaults to the AUTO strategy router
 results = client.recall(
     agent_id="agent-1",
     query="What does the user prefer?",
     top_k=5,
 )
-
 for r in results:
     print(r.content, "(relevance:", round(r.relevance_score, 2), ")")
 ```
 
 ```typescript TypeScript
-import { Z3rnoClient } from '@z3rno/sdk';
+import { Z3rnoClient } from "@z3rno/sdk";
 
 const client = new Z3rnoClient({
-  baseUrl: 'http://localhost:8000',       // or https://api.z3rno.dev
-  apiKey: 'z3rno_sk_test_localdev',
+  baseUrl: "http://localhost:8000",
+  apiKey: "z3rno_sk_test_localdev",
 });
 
 // Store a memory
 const memory = await client.store({
-  agentId: 'agent-1',
-  content: 'User prefers dark mode and uses TypeScript.',
-  memoryType: 'semantic',
+  agentId: "agent-1",
+  content: "User prefers dark mode and uses TypeScript.",
+  memoryType: "semantic",
+  importance: 0.85,
 });
+console.log("stored:", memory.id);
 
-// Recall memories
+// Recall — defaults to the AUTO strategy router
 const results = await client.recall({
-  agentId: 'agent-1',
-  query: 'What does the user prefer?',
+  agentId: "agent-1",
+  query: "What does the user prefer?",
   topK: 5,
 });
-
 for (const r of results) {
   console.log(`${r.content} (relevance: ${r.relevanceScore.toFixed(2)})`);
 }
@@ -93,13 +101,74 @@ for (const r of results) {
 
 </CodeGroup>
 
+## 4. Add a conversation (optional)
+
+For multi-turn agents, scope memories to a conversation so recall returns turn-aware context and the summarization cadence triggers automatically.
+
+<CodeGroup>
+
+```python Python
+conv = client.create_conversation(agent_id="agent-1", title="Allergy intake")
+
+client.add_turn(conv.id, role="user",      content="I'm allergic to penicillin")
+client.add_turn(conv.id, role="assistant", content="Noted — I'll flag amoxicillin too.")
+
+# Recall scoped to this conversation
+scoped = client.recall(agent_id="agent-1", query="allergies", conversation_id=conv.id)
+```
+
+```typescript TypeScript
+const conv = await client.createConversation({ agentId: "agent-1", title: "Allergy intake" });
+
+await client.addTurn(conv.id, { role: "user",      content: "I'm allergic to penicillin" });
+await client.addTurn(conv.id, { role: "assistant", content: "Noted — I'll flag amoxicillin too." });
+
+// Recall scoped to this conversation
+const scoped = await client.recall({
+  agentId: "agent-1",
+  query: "allergies",
+  conversationId: conv.id,
+});
+```
+
+</CodeGroup>
+
+## 5. Or skip the SDK entirely — use MCP
+
+If you're using Claude Desktop, Cursor, or Claude Code, point them at the [z3rno-mcp](https://pypi.org/project/z3rno-mcp/) server and the agent inherits all twelve tools (`z3rno.store`, `z3rno.recall`, `z3rno.start_conversation`, `z3rno.time_travel`, ...) without any code:
+
+```json
+// ~/Library/Application Support/Claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_BASE_URL": "http://localhost:8000",
+        "Z3RNO_API_KEY": "z3rno_sk_test_localdev",
+        "Z3RNO_AGENT_ID": "claude-desktop"
+      }
+    }
+  }
+}
+```
+
+Restart your host. See [Integrations → Anthropic MCP](/integrations/anthropic-mcp) for the full walkthrough.
+
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Core Concepts" icon="brain" href="/concepts/memory-types">
-    Understand the four memory types, the lifecycle, and how temporal versioning works.
+  <Card title="The Z3rno Verbs" icon="terminal" href="/concepts/verbs">
+    Canonical store / recall / forget / audit / ingest / distill / refine reference.
   </Card>
-  <Card title="Framework Integrations" icon="plug" href="/integrations/langchain">
-    Drop Z3rno into LangChain, CrewAI, OpenAI Agents, or Claude via MCP.
+  <Card title="Core Concepts" icon="brain" href="/concepts/memory-types">
+    Four memory types, the lifecycle, and how SCD-2 temporal versioning works.
+  </Card>
+  <Card title="Framework integrations" icon="plug" href="/integrations/langchain">
+    LangChain, LlamaIndex, CrewAI, OpenAI Agents, Vercel AI, Mastra, Anthropic MCP.
+  </Card>
+  <Card title="Self-hosting" icon="server" href="/self-hosting/configuration">
+    Every env var, every gating flag, every opt-in surface.
   </Card>
 </CardGroup>
