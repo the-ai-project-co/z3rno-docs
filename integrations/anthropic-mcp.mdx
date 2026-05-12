@@ -1,38 +1,255 @@
 ---
 title: Anthropic MCP
-description: "Use Z3rno as a memory provider via the Model Context Protocol."
+description: "Plug Z3rno into Claude Desktop, Cursor, Claude Code, or any MCP-compatible runtime via the z3rno-mcp server."
 ---
 
 # Anthropic MCP Integration
 
+`z3rno-mcp` is a Model Context Protocol server that exposes Z3rno's seven verbs — and the conversation + temporal primitives that ride on top of them — as twelve tools any MCP-compatible host can call. Drop it into Claude Desktop, Cursor, or Claude Code and the agent inherits persistent memory, an audit trail, and a knowledge graph without any code on your side.
+
 <Note>
-This integration guide is coming soon. Z3rno will provide a Memory Context Protocol (MCP) server for Claude and other MCP-compatible agents.
+Requires a running Z3rno server. Spin one up locally with `docker compose -f docker-compose.dev.yml up` from [z3rno-server](https://github.com/the-ai-project-co/z3rno-server), or point at a self-hosted instance.
 </Note>
 
-## Quick Preview
+## Install
 
-```typescript
-import { Z3rnoClient } from '@z3rno/sdk';
+```bash
+# Run directly (recommended — no install step, always latest)
+uvx z3rno-mcp
 
-const client = new Z3rnoClient({
-  baseUrl: 'http://localhost:8000',
-  apiKey: 'z3rno_sk_...',
-});
-
-// Store context from a Claude conversation
-await client.store({
-  agentId: 'claude-agent',
-  content: 'User is building a SaaS product for healthcare',
-  memoryType: 'semantic',
-  importance: 0.85,
-});
-
-// Recall relevant context
-const results = await client.recall({
-  agentId: 'claude-agent',
-  query: 'What is the user building?',
-  topK: 5,
-});
+# Or install into your environment
+pip install 'z3rno-mcp>=0.6.1'
 ```
 
-See the [TypeScript SDK guide](/sdks/typescript) for full API documentation.
+`z3rno-mcp` ships on PyPI. The package pins `z3rno` (the Python SDK) `>=0.7.0`, so all twelve tools — including the Forge verbs (`ingest`, `distill`, `refine`), conversation primitives, and temporal recall — are available out of the box.
+
+## Configure your MCP host
+
+<CodeGroup>
+
+```json Claude Desktop
+// ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)
+// %APPDATA%\Claude\claude_desktop_config.json (Windows)
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_BASE_URL": "http://localhost:8000",
+        "Z3RNO_API_KEY": "z3rno_sk_test_localdev",
+        "Z3RNO_AGENT_ID": "claude-desktop"
+      }
+    }
+  }
+}
+```
+
+```json Cursor
+// .cursor/mcp.json (per-workspace) or ~/.cursor/mcp.json (global)
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_BASE_URL": "http://localhost:8000",
+        "Z3RNO_API_KEY": "z3rno_sk_test_localdev",
+        "Z3RNO_AGENT_ID": "cursor"
+      }
+    }
+  }
+}
+```
+
+```json Claude Code
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "z3rno": {
+      "command": "uvx",
+      "args": ["z3rno-mcp"],
+      "env": {
+        "Z3RNO_BASE_URL": "http://localhost:8000",
+        "Z3RNO_API_KEY": "z3rno_sk_test_localdev",
+        "Z3RNO_AGENT_ID": "claude-code"
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+Restart your MCP host. The twelve `z3rno.*` tools should appear in the tool picker.
+
+## Environment variables
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `Z3RNO_BASE_URL` | no | `https://api.z3rno.dev` | URL of the z3rno-server you want to talk to. For local dev use `http://localhost:8000`. |
+| `Z3RNO_API_KEY` | **yes** | — | API key. The default dev key on a fresh local server is `z3rno_sk_test_localdev`. |
+| `Z3RNO_AGENT_ID` | no | — | Default agent id used when a tool call omits one. Without it every tool call must pass `agent_id` explicitly. |
+| `Z3RNO_WEB_URL` | no | `https://app.z3rno.dev` | Base URL the `z3rno.visualize_url` tool returns links against. |
+
+## Tools
+
+`z3rno-mcp` exposes twelve tools, grouped by what they touch.
+
+### Memory primitives
+
+<ResponseField name="z3rno.store" type="tool">
+Store a memory in Z3rno. Persists facts, preferences, decisions, or anything the agent should remember across conversations. Returns the stored memory and its id.
+</ResponseField>
+
+<ResponseField name="z3rno.recall" type="tool">
+Semantic search over memories. Defaults to the `AUTO` strategy router which picks `VECTOR`, `GRAPH`, `LEXICAL`, `TEMPORAL`, `TRACE`, `TRIPLET`, `CYPHER`, or `CODE` per query. Returns ranked results with similarity scores.
+</ResponseField>
+
+<ResponseField name="z3rno.forget" type="tool">
+Soft-delete (default) or hard-delete a memory. Use `hard_delete=true` to satisfy GDPR right-to-erasure — the row is removed and a Merkle-rooted, ed25519-signed certificate is emitted to `forget_certificates`.
+</ResponseField>
+
+<ResponseField name="z3rno.audit" type="tool">
+Paginated query over the immutable audit log: every `store` / `recall` / `forget` / `distill` operation, hash-chained per tenant. Useful for compliance and debugging.
+</ResponseField>
+
+### Forge (knowledge graph)
+
+<ResponseField name="z3rno.ingest" type="tool">
+Push raw text or a URL into the Forge. Returns a `job_id`; the server chunks, embeds, and (when `INGEST_AUTO_DISTILL=true`, the default) chains directly into `z3rno.distill`. File uploads aren't supported via MCP — use the HTTP `/v1/ingest/file` endpoint for those.
+</ResponseField>
+
+<ResponseField name="z3rno.distill" type="tool">
+Build or extend the knowledge graph from stored memories. Runs the Forge pipeline: chunk → LLM entity + relationship extraction → write Memo nodes + edges. Returns a `job_id`; poll with `poll_job_id=<id>`. Idempotent.
+</ResponseField>
+
+<ResponseField name="z3rno.refine" type="tool">
+Improve the graph in place: dedupe Memos sharing an ontology URI or normalized name (SCD-2 supersede), EMA-blend edge weights from accumulated feedback, prune sub-threshold edges. Optional LLM stages (`infer` / `summarize`) are server-side flags. Admin-scoped.
+</ResponseField>
+
+<ResponseField name="z3rno.visualize_url" type="tool">
+Return a URL to the Z3rno graph viewer for a dataset or agent. Use when the user asks "show me the graph". The viewer (z3rno-web `/graph`) renders the Memo subgraph in Cytoscape.
+</ResponseField>
+
+### Conversation memory (Phase G)
+
+<ResponseField name="z3rno.start_conversation" type="tool">
+Open a new conversation. Returns the `conversation_id` so subsequent stores can be tagged. Call this at the start of a chat — the resulting id enables turn-aware recall and automatic summarization triggers.
+</ResponseField>
+
+<ResponseField name="z3rno.end_conversation" type="tool">
+Mark a conversation finished. The metadata row is soft-deleted and no further turns can be added; existing turn Memos stay queryable via standard recall.
+</ResponseField>
+
+<ResponseField name="z3rno.summarize_conversation" type="tool">
+Fetch turn history in order so the agent can produce a summary. The agent runs its own summarization; once done, it persists the result via `z3rno.store` with `memory_type='semantic'` and `metadata={'kind': 'summary', 'covers_turns': [start, end]}`.
+</ResponseField>
+
+<ResponseField name="z3rno.time_travel" type="tool">
+Recall memories as they existed at a past timestamp. Uses Z3rno's SCD-2 temporal index. Supply an ISO-8601 timestamp like `2026-01-15T12:00:00Z`. Useful for "what did I tell you last week?" and compliance investigations.
+</ResponseField>
+
+## Worked example
+
+This is what a turn looks like from Claude Desktop once the MCP server is wired in. The user types in chat; Claude calls the tools.
+
+```text User
+Remember that I'm allergic to penicillin.
+```
+
+```json Tool call
+{
+  "tool": "z3rno.store",
+  "args": {
+    "content": "User is allergic to penicillin",
+    "memory_type": "semantic",
+    "importance": 0.95
+  }
+}
+```
+
+```text User (a week later)
+Can you prescribe me amoxicillin?
+```
+
+```json Tool call
+{
+  "tool": "z3rno.recall",
+  "args": {
+    "query": "user allergies medication contraindications",
+    "top_k": 5
+  }
+}
+```
+
+Claude reads the recall results, sees the penicillin allergy (amoxicillin is in the same family), and warns the user — without you having written any prompt-engineering glue.
+
+```text User
+Show me the audit trail for today.
+```
+
+```json Tool call
+{
+  "tool": "z3rno.audit",
+  "args": {
+    "limit": 50
+  }
+}
+```
+
+## Adding a conversation
+
+For multi-turn sessions where you want turn-aware recall and audit-friendly history:
+
+```json
+// Start
+{ "tool": "z3rno.start_conversation", "args": {} }
+// → { "conversation_id": "conv_abc123" }
+
+// Store turns (Claude does this automatically per message)
+{ "tool": "z3rno.store",
+  "args": { "content": "User said: I prefer dark mode",
+            "memory_type": "episodic",
+            "metadata": { "conversation_id": "conv_abc123", "role": "user" } } }
+
+// Scope recall to this conversation
+{ "tool": "z3rno.recall",
+  "args": { "query": "ui preferences", "conversation_id": "conv_abc123" } }
+
+// End (soft-deletes the row; turns stay queryable)
+{ "tool": "z3rno.end_conversation",
+  "args": { "conversation_id": "conv_abc123" } }
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Tools don't show up after restart">
+    Check the host's MCP log:
+    - **Claude Desktop**: `~/Library/Logs/Claude/mcp.log` (macOS) or `%APPDATA%\Claude\logs\mcp.log` (Windows)
+    - **Cursor**: open the command palette → "MCP: Show Server Logs"
+
+    Most common cause: `uvx` not on PATH. Run `which uvx` in a terminal — if empty, install `uv` from [astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/).
+  </Accordion>
+
+  <Accordion title="`agent_id is required` errors">
+    Either set `Z3RNO_AGENT_ID` in the env block of your config, or pass `agent_id` on every tool call. The default mode is "no implicit agent" so multi-agent setups don't accidentally cross-write.
+  </Accordion>
+
+  <Accordion title="Authentication errors (401)">
+    Verify `Z3RNO_API_KEY` matches the server. For a fresh local server the dev key is `z3rno_sk_test_localdev`. If you've rotated it, fetch the current value from your `.env`. For production, generate a new key via `POST /v1/api-keys`.
+  </Accordion>
+
+  <Accordion title="`z3rno.visualize_url` returns a 404">
+    The graph viewer hasn't been deployed yet at the URL the tool returns. Either run `z3rno-web` locally (`npm run dev` from the [z3rno-web](https://github.com/the-ai-project-co/z3rno-web) repo) and set `Z3RNO_WEB_URL=http://localhost:3000`, or wait for the hosted viewer to land at `app.z3rno.dev/graph`.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- **Package:** [`z3rno-mcp` on PyPI](https://pypi.org/project/z3rno-mcp/) — current version `0.6.1`
+- **Source:** [github.com/the-ai-project-co/z3rno-mcp](https://github.com/the-ai-project-co/z3rno-mcp)
+- **Underlying SDK:** [`z3rno` on PyPI](https://pypi.org/project/z3rno/) — pinned `>=0.7.0`
+- **Server:** see [Components → z3rno-server](/components/server) for the full v1 surface the tools call into
+- **Verbs:** see [Concepts → The Z3rno Verbs](/concepts/verbs) for the canonical seven-verb table
