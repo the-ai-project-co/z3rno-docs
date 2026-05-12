@@ -1,0 +1,221 @@
+---
+title: Managed Hosting
+description: "Operating Z3rno as a multi-tenant managed service — auth posture, budget admin, ops playbook."
+---
+
+# Managed Hosting
+
+If you're running Z3rno for someone else — internal platform team
+serving multiple product squads, or a SaaS offering — you'll hit
+operational questions the single-tenant deploy never asks. This
+guide covers the surface introduced in v0.22.1 for cross-tenant
+administration and the auth posture you should adopt around it.
+
+## What "managed hosting" means here
+
+Z3rno's per-tenant API surface is already tenant-isolated by
+construction: RLS scopes every row, every API key resolves to one
+`org_id`, every request stamps `app.current_org_id`. A vanilla
+deploy has no concept of "the operator" — every authenticated
+principal is a tenant.
+
+For managed hosting that's not enough. You need:
+
+- A way to **read** a tenant's state without holding their auth
+  (support requests, billing reconciliation).
+- A way to **change** their configuration on their behalf (budget
+  bumps, rate-limit overrides, lifecycle policy edits).
+- An auth path that's deliberately **separate** from tenant keys
+  so a leaked tenant key cannot escalate to cross-tenant admin.
+
+v0.22.1 ships the first slice of that: cross-tenant budget admin.
+Subsequent slices will widen the surface (rate-limit overrides,
+lifecycle policy admin) on the same auth posture.
+
+## The superadmin auth model
+
+Authentication for the cross-tenant surface is a single env-keyed
+secret:
+
+```bash
+SUPERADMIN_ENABLED=true
+SUPERADMIN_API_KEY=<32+ character random secret>
+```
+
+Both must be set. An empty key disables the surface even when the
+flag is `true`. With either unset, the routes are not registered
+at all — they don't appear in the OpenAPI spec, and the auth
+middleware never stamps `role="superadmin"` on any request.
+
+Treat the superadmin key as a root password:
+
+- **Generate it at deploy time**, not application-side. A long
+  random string from your secrets manager.
+- **Keep it out of git.** Inject it via Kubernetes Secret,
+  HashiCorp Vault, AWS Secrets Manager, etc. — the same place your
+  database password lives.
+- **Rotate it by config push.** v0.22.1 ships a single-key model;
+  scheduled rotation needs a config-push playbook (or wait for the
+  v0.23 multi-key support tracked in `OPEN-WORK.md`).
+- **Never present it from a tenant-facing client.** It belongs in
+  your control plane / ops tooling only. Tenant-facing UIs and the
+  SDKs your customers use should never see it.
+
+## What's on the surface today
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/v1/tenants/{org_id}/budgets` | Read overrides + effective caps |
+| `PUT` | `/v1/tenants/{org_id}/budgets` | Replace overrides |
+
+Same Pydantic shape as `/v1/tenants/me/budgets`. The `effective`
+field in the response is the result of `resolve_budgets()` — your
+overrides merged with the server-default caps from
+`USAGE_BUDGET_DAILY_TOKENS` etc.
+
+### Status codes
+
+| Status | When |
+|---|---|
+| `200` | Success |
+| `401` | No bearer presented |
+| `403` | Bearer presented but isn't the superadmin key |
+| `404` | Target `org_id` doesn't exist |
+| `422` | Body validation failed (negative budget, etc.) |
+
+## SDK usage
+
+Both Python and TypeScript SDKs expose a `client.admin` sub-namespace
+since v0.9.0. The SDK doesn't know it's holding a superadmin key —
+it just forwards the request through the same `_request` helper as
+every other call. Retries, timeouts, error mapping, structured
+logging all work the same way.
+
+```python
+# z3rno-sdk-python >= 0.9.0
+from z3rno import Z3rnoClient, TenantBudgets
+
+control_plane = Z3rnoClient(
+    base_url="https://api.example.com",
+    api_key=os.environ["Z3RNO_SUPERADMIN_KEY"],
+)
+
+# Read another tenant's budget posture
+view = control_plane.admin.get_budgets("11111111-1111-1111-1111-111111111111")
+print(view.overrides, view.effective)
+
+# Bump a customer's daily token cap after a sales conversation
+control_plane.admin.set_budgets(
+    "11111111-1111-1111-1111-111111111111",
+    TenantBudgets(daily_tokens=500_000, monthly_tokens=10_000_000),
+)
+```
+
+```ts
+// @z3rno/sdk >= 0.9.0
+import { Z3rnoClient } from "@z3rno/sdk";
+
+const controlPlane = new Z3rnoClient({
+  baseUrl: "https://api.example.com",
+  apiKey: process.env.Z3RNO_SUPERADMIN_KEY!,
+});
+
+const view = await controlPlane.admin.getBudgets(orgId);
+await controlPlane.admin.setBudgets(orgId, {
+  daily_tokens: 500_000,
+  monthly_tokens: 10_000_000,
+});
+```
+
+The async Python client mirrors the sync one (`async with
+AsyncZ3rnoClient(...) as c: await c.admin.get_budgets(org)`).
+There is no separate async client in TypeScript — `Z3rnoClient`
+returns Promises already.
+
+## Ops playbook
+
+### Rollout checklist
+
+When you flip the surface on for the first time:
+
+1. **Mint the key.** 32+ random characters from a secure source.
+   Treat as immediately load-bearing.
+2. **Land it in your secrets manager.** Inject as
+   `SUPERADMIN_API_KEY` env on the server pods only. Do not put
+   it on worker pods — they don't need it and a stolen worker
+   image shouldn't carry it.
+3. **Flip `SUPERADMIN_ENABLED=true`.** Roll the server fleet.
+4. **Smoke-test from your control plane.** A `GET
+   /v1/tenants/{your-test-org}/budgets` should return 200; the
+   same call with a tenant key should return 403.
+5. **Audit log review.** The audit chain captures the
+   `org_id` of every recall/store/forget. It does **not** currently
+   capture superadmin-tier writes; those land directly on the
+   `tenants.usage_budget` column. If you need a record of who
+   bumped whose budget, log it from your control plane.
+
+### Handling a "raise my limit" request
+
+The typical flow when a customer asks for more headroom:
+
+1. Sales / support qualifies the request.
+2. Control plane operator pulls the current posture:
+   ```python
+   view = control_plane.admin.get_budgets(customer_org_id)
+   ```
+3. Confirms the headroom delta with the customer.
+4. Applies it:
+   ```python
+   control_plane.admin.set_budgets(
+       customer_org_id,
+       TenantBudgets(
+           daily_tokens=view.overrides.daily_tokens + delta,
+           monthly_tokens=view.overrides.monthly_tokens + (delta * 30),
+       ),
+   )
+   ```
+5. Confirms via a follow-up `get_budgets` that `effective` reflects
+   the change.
+
+Zero or missing fields **inherit the server default** — they're
+not "no override." If you want to genuinely lift a cap for one
+tenant, you have to spell out the higher number, not omit the
+field.
+
+### Revoking a superadmin key
+
+There is no DB row to delete. The key is the env value.
+
+1. Mint a new key.
+2. Land it in your secrets manager.
+3. Push the config — the old key stops working as soon as the
+   server pod sees the new env value (effectively immediately on
+   the next pod start; rolling restart if you want zero-downtime).
+4. In a multi-replica deploy, until every pod has the new value,
+   half of requests will accept the old key and half the new. Plan
+   your rotation around that window. (Multi-key support is on the
+   roadmap precisely to remove this window.)
+
+## What's not yet on this surface
+
+The slice that shipped covers budgets. Operators commonly want the
+following on the same auth posture; they're tracked in
+`OPEN-WORK.md` v0.23+ candidates:
+
+- **Rate-limit overrides per tenant.**
+- **Lifecycle policy admin.**
+- **API key issuance on behalf of a tenant** (today: tenant
+  admin/write keys are needed; ops can't mint).
+- **Audit trail of superadmin actions.** Right now the audit chain
+  only logs tenant-tier operations.
+
+If any of these are blocking your roll-out, file an issue
+referencing slice 21.3 — they're scoped, just not yet shipped.
+
+## See also
+
+- [Components → z3rno-server](/components/server) — the admin
+  surface table + RBAC posture in the API reference.
+- [Self-hosting → Configuration](/self-hosting/configuration) —
+  every env var, including `SUPERADMIN_ENABLED` and
+  `SUPERADMIN_API_KEY`.

@@ -243,6 +243,29 @@ Zero = no cap (default). Non-zero values trip `BudgetExceededError` on Forge / r
 
 Per-tenant overrides land via `PUT /v1/tenants/me/budgets` (v0.20.3). See [Components → z3rno-server](/components/server) for the endpoint.
 
+### Cross-tenant admin (v0.22.1, managed-hosting)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SUPERADMIN_ENABLED` | `false` | Gates `/v1/tenants/{org_id}/budgets`. Both this **and** `SUPERADMIN_API_KEY` must be set for the routes to register. |
+| `SUPERADMIN_API_KEY` | `""` | Deploy-time secret. The bearer presented on a request is matched against this directly — there is no DB lookup. Treat like a root password; rotate by config push. |
+
+The cross-tenant surface is off by default and stays invisible (not
+in the OpenAPI spec) until both vars are set. See the
+[Managed-hosting guide](/guides/managed-hosting) for the ops playbook.
+
+### Recall counter batching (v0.22.0)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RECALL_COUNT_BATCH_ENABLED` | `false` | Coalesce `recall_count` bumps into one UPDATE per org per window. Per-process. |
+| `RECALL_COUNT_BATCH_WINDOW_MS` | `50` | Flush cadence. Smaller = fresher counters + more writes; larger = staler counters + better coalescing. |
+
+Off by default; flip on once your deployment's benchmark numbers
+ratify the win. The single-process laptop bench delta is +2-4%
+ops/sec at high concurrency with a -19 to -25% p99 reduction at
+20-30 concurrent recalls.
+
 ### OpenTelemetry tracing
 
 | Variable | Default | Notes |

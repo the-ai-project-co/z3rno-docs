@@ -92,7 +92,8 @@
         "pages": [
           "guides/rag-pipeline",
           "guides/multi-agent-memory",
-          "guides/memory-architectures"
+          "guides/memory-architectures",
+          "guides/managed-hosting"
         ]
       },
       {
