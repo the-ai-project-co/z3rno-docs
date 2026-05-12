@@ -1,132 +1,231 @@
 ---
 title: "z3rno-server"
-description: "The HTTP API service for Z3rno memory operations"
+description: "The FastAPI HTTP API for Z3rno: thirty-plus endpoints across memories, conversations, Forge, governance, and operator surfaces."
 ---
 
 ## Overview
 
-`z3rno-server` is a FastAPI application that exposes Z3rno's memory engine over HTTP. It imports `z3rno-core` for business logic and adds authentication, rate limiting, audit logging, and async task processing.
+`z3rno-server` is a FastAPI application that exposes the Z3rno engine over HTTP. It imports `z3rno-core` for business logic and adds authentication, rate limiting, body-size limits, structured logging, request-ID propagation, and a Celery worker tier for async tasks (audit drain, lifecycle sweeps, Forge pipelines, refine scheduler).
+
+**Current version:** `z3rno-server 0.20.0`. See [`changelogs/V0-20-CHANGELOG.md`](https://github.com/the-ai-project-co/z3rno-process-docs/blob/main/improvements/changelogs/V0-20-CHANGELOG.md) for what's new.
 
 ## Endpoints
 
-| Method | Path | Description |
+Endpoints fall into four groups: **always-on** (registered on every deploy), **conversation memory** (always-on, Phase G), **opt-in** (registered when an `*_ENABLED` flag is true), and **public** (no auth required).
+
+### Always-on
+
+| Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/memories` | Store a new memory |
-| `POST` | `/v1/memories/recall` | Semantic search over memories |
-| `DELETE` | `/v1/memories/{id}` | Soft-delete a memory |
-| `DELETE` | `/v1/memories/batch` | Batch delete memories |
-| `DELETE` | `/v1/memories/{id}/gdpr` | GDPR hard delete |
-| `GET` | `/v1/memories/{id}/versions` | Temporal version history |
-| `POST` | `/v1/memories/recall/as-of` | Point-in-time recall |
-| `GET` | `/v1/audit` | Query audit log |
-| `GET` | `/v1/health` | Health check |
-| `GET` | `/v1/health/ready` | Readiness probe (DB connected) |
+| `POST` | `/v1/memories` | Store a memory |
+| `POST` | `/v1/memories/recall` | Semantic search (defaults to `AUTO` strategy router) |
+| `POST` | `/v1/memories/recall/stream` | Server-sent-events streaming recall (Phase G slice 5) |
+| `POST` | `/v1/memories/forget` | Soft-delete one or many memories |
+| `POST` | `/v1/memories/batch` | Batch store |
+| `GET` | `/v1/memories/{memory_id}` | Fetch one memory |
+| `GET` | `/v1/memories/{memory_id}/history` | SCD-2 temporal version history |
+| `PATCH` | `/v1/memories/{memory_id}` | Update content/metadata/importance |
+| `GET` | `/v1/audit` | Hash-chained audit log (paginated) |
+| `GET` | `/v1/usage` | Token / embedding / LLM-call counters (today + month-to-date) |
+| `GET` | `/v1/tenants/me/budgets` | Resolved budgets + raw per-tenant overrides (v0.20.3) |
+| `PUT` | `/v1/tenants/me/budgets` | Set per-tenant budget overrides (v0.20.3) |
+| `POST` | `/v1/sessions` | Start a session |
+| `POST` | `/v1/sessions/{session_id}/end` | End a session |
+| `GET` | `/v1/sessions/{session_id}` | Get session state |
+| `POST` | `/v1/api-keys` | Create an API key |
+| `GET` | `/v1/api-keys` | List the caller's API keys |
+| `DELETE` | `/v1/api-keys/{key_id}` | Revoke a key |
+| `GET` | `/v1/limits` | Report the caller's rate-limit posture |
+| `GET` | `/v1/graph/data` | Memo subgraph (nodes + edges) for the `/graph` viewer |
 
-## Middleware Chain
+### Conversation memory (Phase G slice 2 — always-on)
 
-Requests pass through these layers in order:
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/conversations` | Open a conversation |
+| `GET` | `/v1/conversations/{conversation_id}` | Conversation metadata |
+| `POST` | `/v1/conversations/{conversation_id}/turns` | Append a turn (returns `turn_index` + `needs_summary`) |
+| `GET` | `/v1/conversations/{conversation_id}/turns` | List turns (paginated by `after_turn` + `limit`) |
+| `DELETE` | `/v1/conversations/{conversation_id}` | Soft-delete the conversation; turn Memos stay queryable |
 
+### Opt-in
+
+Each block registers only when its gating flag is true. With the flag off, the routes are absent from the OpenAPI surface and the corresponding worker tasks self-reject.
+
+| Method | Path | Gate | Purpose |
+|---|---|---|---|
+| `POST` | `/v1/distill` | `DISTILL_ENABLED=true` | Enqueue a Forge distillation job |
+| `GET` | `/v1/distill/{job_id}` | `DISTILL_ENABLED=true` | Poll job state |
+| `POST` | `/v1/ingest` | `INGEST_ENABLED=true` | Ingest text or URL |
+| `POST` | `/v1/ingest/file` | `INGEST_ENABLED=true` | Multipart file upload (PDF / DOCX / CSV / MD / code / text + image/audio when `MULTIMODAL_ENABLED=true`) |
+| `POST` | `/v1/ingest/upload-url` | `INGEST_ENABLED=true` + `STORAGE_BACKEND=s3` | Presigned URL for direct-to-S3 upload |
+| `POST` | `/v1/ingest/finalize/{job_id}` | `INGEST_ENABLED=true` | Finalize a direct-upload ingest |
+| `GET` | `/v1/ingest/loaders` | `INGEST_ENABLED=true` | List registered loaders + MIME types |
+| `GET` | `/v1/ingest/{job_id}` | `INGEST_ENABLED=true` | Poll ingest job state |
+| `POST` | `/v1/ingest/search` | `INGEST_ENABLED=true` + `TAVILY_API_KEY` set | Tavily-driven web discovery → fan-out ingest |
+| `GET` | `/v1/ingest/search/{batch_id}` | `INGEST_ENABLED=true` + `TAVILY_API_KEY` set | Search batch status |
+| `POST` | `/v1/datasets` | `INGEST_ENABLED=true` | Create a dataset |
+| `GET` | `/v1/datasets` | `INGEST_ENABLED=true` | List datasets (paginated) |
+| `GET` | `/v1/datasets/{dataset_id}` | `INGEST_ENABLED=true` | Fetch one |
+| `DELETE` | `/v1/datasets/{dataset_id}` | `INGEST_ENABLED=true` | Soft-delete + detach memories |
+| `POST` | `/v1/feedback` | `REFINE_ENABLED=true` | Record -1/0/+1 signal on a memory or AGE edge |
+| `POST` | `/v1/refine` | `REFINE_ENABLED=true` | Enqueue a refine run |
+| `GET` | `/v1/refine/{job_id}` | `REFINE_ENABLED=true` | Poll refine job state |
+| `GET` | `/v1/forget/{cert_id}` | `FORGET_PROOF_ENABLED=true` | Fetch a Merkle-rooted, ed25519-signed forget certificate |
+
+### Public (no auth)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/v1/health` | Liveness probe |
+| `GET` | `/v1/ready` | Readiness probe (DB connected, migrations applied) |
+| `GET` | `/v1/worker/health` | Celery worker pulse |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/docs`, `/redoc`, `/openapi.json` | OpenAPI surface |
+
+## Middleware chain
+
+Requests pass through these layers, outermost first:
+
+```text
+Request → CORS → RequestId → Logging → BodyLimit → Auth → RateLimit → Route Handler
 ```
-Request → CORS → Request ID → Rate Limiter → Auth → RLS Injection → Handler → Audit Log → Response
-```
 
-1. **CORS** — Configurable allowed origins
-2. **Request ID** — Attaches `X-Request-Id` for tracing
-3. **Rate Limiter** — Token bucket per API key (default: 100 req/min)
-4. **Auth** — Validates `Authorization: Bearer <api_key>`, resolves tenant
-5. **RLS Injection** — Sets `app.current_tenant` on the DB connection
-6. **Audit Log** — Records operation, latency, and result count
+| Layer | Notes |
+|---|---|
+| **CORS** | Origins controlled by `Z3RNO_CORS_ORIGINS` (comma-separated). |
+| **RequestId** | Generates / preserves `X-Request-Id` for tracing. |
+| **Logging** | Structured log line per request via structlog; includes request id, latency, status. |
+| **BodyLimit** | Caps request body size; whitelists `multipart/form-data` for `/v1/ingest/file` (which enforces its own `INGEST_MAX_FILE_BYTES` cap). |
+| **Auth** | Validates `Authorization: Bearer <key>` (or `X-API-Key`), resolves the tenant, sets `app.current_org_id` for PostgreSQL RLS. Public paths bypass. |
+| **RateLimit** | Token-bucket per API key, backed by Valkey. Gated on `RATE_LIMIT_ENABLED`. |
+| **Route Handler** | The endpoint logic. |
 
 ## Authentication
 
-API keys are passed via the `Authorization` header:
+API keys are passed via either header:
 
 ```bash
-curl -X POST https://api.z3rno.dev/v1/memories \
-  -H "Authorization: Bearer z3_live_abc123..." \
+curl -X POST http://localhost:8000/v1/memories \
+  -H "Authorization: Bearer z3rno_sk_test_localdev" \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "agent-1", "content": "User likes Python"}'
+
+# X-API-Key works too
+curl -H "X-API-Key: z3rno_sk_test_localdev" ...
 ```
 
-Keys are prefixed: `z3_live_` (production) or `z3_test_` (sandbox). Sandbox keys operate on isolated data and have relaxed rate limits.
+Keys carry an `z3rno_sk_*` prefix. The dev default seeded on a fresh local server is `z3rno_sk_test_localdev` — **change this for any non-localhost deploy**. Production keys are generated via `POST /v1/api-keys` (returns the plaintext key once; only its hash is stored).
 
-## Rate Limiting
+## Rate limiting
 
-| Tier | Requests/min | Burst |
-|---|---|---|
-| Free | 30 | 50 |
-| Pro | 300 | 500 |
-| Enterprise | Custom | Custom |
+Token bucket per API key, evaluated in the `RateLimit` middleware. Rate-limit response headers are returned on every authed call:
 
-Rate limit headers are returned on every response:
-
-```
-X-RateLimit-Limit: 300
-X-RateLimit-Remaining: 297
+```text
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 97
 X-RateLimit-Reset: 1706140800
 ```
 
-## Celery Workers
+The shipped default is `RATE_LIMIT_REQUESTS=100` per `RATE_LIMIT_WINDOW=60` seconds with `RATE_LIMIT_BURST=20`. Self-hosters tune these per deploy; managed-cloud tiering lives ahead of v0.21.
 
-Background tasks are processed by Celery workers with Valkey as the broker:
+## Celery workers
 
-| Task | Schedule | Description |
+Background tasks ride on Celery with Valkey as broker + result backend. Twelve shipped tasks:
+
+| Task | Trigger | Notes |
 |---|---|---|
-| `ttl_expiration` | Every 1 min | Expire memories past their TTL |
-| `importance_decay` | Every 1 hour | Reduce importance of unused memories |
-| `embedding_backfill` | On demand | Re-embed memories after model upgrade |
-| `graph_maintenance` | Every 6 hours | Prune orphaned graph edges |
+| `z3rno.audit_drain` | Beat (every `AUDIT_DRAIN_INTERVAL_SECONDS`, default 1s) **or** NOTIFY/LISTEN wake (v0.20.2) | Drains `audit_log_pending` into `audit_log` with per-org advisory locks. |
+| `z3rno.sweep_expired_memories` | Beat (every 1 min) | Soft-delete memories past their TTL. |
+| `z3rno.decay_importance` | Beat (every 1 hr) | EMA decay on `importance` for unused memories. |
+| `z3rno.enforce_retention_caps` | Beat (every 6 hr) | Prune over-cap memories per agent. |
+| `z3rno.ensure_audit_partitions` | Beat (daily) | Pre-creates next-month audit log partitions. |
+| `z3rno.refine_scheduler_tick` | Beat (when `REFINE_BEAT_INTERVAL_SECONDS > 0`) | Picks opted-in tenants oldest-first → enqueues `z3rno.refine_run`. |
+| `z3rno.refine_run` | On-demand (API or scheduler) | One refine pipeline pass for a tenant. |
+| `z3rno.ingest_watchdog` | Beat (every 5 min) | Resurrects stuck `ingest_jobs` rows. |
+| `z3rno.forge_distill` | On-demand via `POST /v1/distill` | The Forge pipeline. Self-rejects if `DISTILL_ENABLED=false`. |
+| `z3rno.ingest_run` | On-demand via `POST /v1/ingest*` | Bridges to `IngestPipeline.run()`. Self-rejects if `INGEST_ENABLED=false`. |
+| `z3rno.generate_embedding` | On-demand | Embedding backfill. |
+| `z3rno.worker_ping` | On-demand (health check) | Drives `GET /v1/worker/health`. |
+
+NOTIFY/LISTEN wake-up: when `Z3RNO_AUDIT_LISTEN_ENABLED=true` (v0.20.2), a dedicated `z3rno-audit-listener` console-script pod opens a Postgres `LISTEN z3rno_audit_pending` and fires `z3rno.audit_drain` on every write. Drains wake in ~50 ms instead of waiting for the next beat tick; the beat-driven poll stays as a fallback at a longer interval (60 s recommended).
 
 ```bash
-# Start a worker
-celery -A z3rno_server.tasks worker --loglevel=info --concurrency=4
+# Worker
+celery -A z3rno_server.workers.celery_app worker --loglevel=info --concurrency=4
+# Beat scheduler (singleton — do not scale beyond 1 replica)
+celery -A z3rno_server.workers.celery_app beat --loglevel=info
+# Audit listener (opt-in singleton, v0.20.2+)
+Z3RNO_AUDIT_LISTEN_ENABLED=true z3rno-audit-listener
 ```
 
 ## Configuration
 
-Environment variables:
+Required env vars:
 
 ```bash
-# Required
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/z3rno
 VALKEY_URL=redis://localhost:6379/0
-
-# Optional
-Z3RNO_EMBEDDING_MODEL=text-embedding-3-small   # OpenAI model
-Z3RNO_EMBEDDING_API_KEY=sk-...                  # OpenAI key
-Z3RNO_RATE_LIMIT_DEFAULT=100                    # req/min
-Z3RNO_CORS_ORIGINS=https://app.z3rno.dev        # comma-separated
-Z3RNO_LOG_LEVEL=info                            # debug|info|warning|error
+Z3RNO_API_KEY=z3rno_sk_...            # dev default: z3rno_sk_test_localdev
 ```
 
-## Running Locally
+Embedding (required for `recall` quality):
 
 ```bash
-# Clone and install
-git clone https://github.com/the-ai-project-co/z3rno-server
-cd z3rno-server
-uv sync
-
-# Start dependencies
-docker compose up -d postgres valkey
-
-# Run migrations
-alembic upgrade head
-
-# Start the server
-uvicorn z3rno_server.main:app --reload --port 8000
+EMBEDDING_PROVIDER=openai                    # default
+EMBEDDING_MODEL=text-embedding-3-small       # default; 1536 dims
+OPENAI_API_KEY=sk-...
 ```
 
-## Error Responses
+CORS + logging:
 
-All errors follow RFC 7807 (Problem Details):
+```bash
+Z3RNO_CORS_ORIGINS=https://app.z3rno.dev     # comma-separated; default: *
+LOG_LEVEL=info
+```
+
+The Phase A/B/C/D/F/G opt-in flags (`DISTILL_ENABLED`, `INGEST_ENABLED`, `REFINE_ENABLED`, `MEMORY_TIER_AUTO_ROUTE`, `RETRIEVAL_REDACTION_ENABLED`, `FORGET_PROOF_ENABLED`, `OTEL_ENABLED`, `DATABASE_READ_URL`, `Z3RNO_AUDIT_LISTEN_ENABLED`, the `USAGE_BUDGET_*` family, multimodal, S3, Tavily, Playwright, codegraph, ontology, distributed-backends, etc.) all live alongside on the [Self-hosting / Configuration](/self-hosting/configuration) page.
+
+## Running locally
+
+```bash
+git clone https://github.com/the-ai-project-co/z3rno-server
+cd z3rno-server
+uv sync --dev
+
+# Start Postgres + Valkey
+docker compose -f docker-compose.dev.yml up -d postgres valkey
+
+# Apply migrations (Alembic, sync driver)
+DATABASE_URL=postgresql+psycopg://z3rno:z3rno_dev_password@localhost:5432/z3rno \
+  alembic upgrade head
+
+# Run the server
+uv run uvicorn z3rno_server.main:app --reload --port 8000
+
+# In separate terminals
+uv run celery -A z3rno_server.workers.celery_app worker --loglevel=info
+uv run celery -A z3rno_server.workers.celery_app beat --loglevel=info
+```
+
+## Error responses
+
+Errors follow RFC 7807 (Problem Details):
 
 ```json
 {
   "type": "https://docs.z3rno.dev/errors/rate-limited",
   "title": "Rate Limit Exceeded",
   "status": 429,
-  "detail": "You have exceeded 300 requests per minute.",
+  "detail": "You have exceeded 100 requests per 60 seconds.",
   "instance": "/v1/memories/recall"
 }
 ```
+
+## Reference
+
+- **Source:** [github.com/the-ai-project-co/z3rno-server](https://github.com/the-ai-project-co/z3rno-server)
+- **Image:** `ghcr.io/safayavatsal/z3rno-server:0.20.0` (public mirror) — see [Components → z3rno-helm](/components/helm) for the chart that deploys it
+- **Engine:** [Components → z3rno-core](/components/core) — the library this server imports
+- **Verbs:** [Concepts → The Z3rno Verbs](/concepts/verbs) — canonical seven-verb table
+- **Config knobs:** [Self-hosting → Configuration](/self-hosting/configuration) — every env var
