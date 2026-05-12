@@ -1,251 +1,260 @@
 ---
 title: TypeScript SDK
-description: "Install the Z3rno TypeScript SDK and start storing, recalling, and managing agent memories."
+description: "The official TypeScript SDK for Z3rno: every server verb (store / recall / forget / audit / ingest / distill / refine), conversation memory, tenant self-management, and ready-to-drop adapters for Vercel AI and Mastra."
 ---
 
 # TypeScript SDK
 
-The Z3rno TypeScript SDK provides a fully-typed client for interacting with the Z3rno memory API. All responses are validated with Zod schemas at runtime.
+The Z3rno TypeScript SDK is a thin fetch-based client with Zod runtime validation on every response. Dual ESM + CJS build, native `fetch` — no axios, no node-fetch, no undici.
 
-## Installation
+**Current version:** `@z3rno/sdk 0.7.0` on npm. Requires Node.js 18+ or any runtime with `fetch` (Deno, Bun, Cloudflare Workers).
+
+## Install
 
 ```bash
 npm install @z3rno/sdk
+# pnpm add @z3rno/sdk
+# yarn add @z3rno/sdk
 ```
 
-Requires Node.js 18+ or any runtime with `fetch` support (Deno, Bun, Cloudflare Workers).
-
-## Client Creation
+## Client
 
 ```typescript
-import { Z3rnoClient } from '@z3rno/sdk';
+import { Z3rnoClient } from "@z3rno/sdk";
 
 const client = new Z3rnoClient({
-  baseUrl: 'http://localhost:8000',       // or https://api.z3rno.dev
-  apiKey: 'z3rno_sk_prod_your_key_here',
+  baseUrl: "http://localhost:8000",
+  apiKey: "z3rno_sk_test_localdev",   // default dev key on a fresh local server
 });
 ```
 
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `baseUrl` | Yes | — | Z3rno server URL |
-| `apiKey` | Yes | — | Your organisation's API key |
-| `timeout` | No | `30000` | Request timeout in milliseconds |
-| `maxRetries` | No | `3` | Number of retries on transient failures |
+| Option | Default | Notes |
+|---|---|---|
+| `baseUrl` | required | z3rno-server URL. Local dev: `http://localhost:8000`. |
+| `apiKey` | required | API key. Default dev: `z3rno_sk_test_localdev`. |
+| `timeoutMs` | `30000` | Per-request timeout. |
+| `maxRetries` | `3` | Retries on transient failures. |
 
-## Store a Memory
+## Method reference
+
+The TS client mirrors the Python SDK's surface. Method names are camelCase; the API contract is identical.
+
+### Memory primitives
 
 ```typescript
+// store / batch
 const memory = await client.store({
-  agentId: 'agent-1',
-  content: 'User prefers dark mode and uses TypeScript.',
-  memoryType: 'semantic',              // 'working' | 'episodic' | 'semantic' | 'procedural'
-  metadata: { category: 'preferences' },
-  importance: 0.85,                    // Optional: 0.0 - 1.0
+  agentId: "agent-1",
+  content: "User prefers dark mode and TypeScript",
+  memoryType: "semantic",                 // working | episodic | semantic | procedural
+  metadata: { category: "preferences" },
+  importance: 0.85,
 });
 
-console.log(memory.id);          // mem_a1b2c3d4...
-console.log(memory.createdAt);   // 2026-04-19T10:30:00Z
-```
+const batch = await client.storeBatch([{ agentId: "...", content: "..." }]);
 
-## Recall Memories
+// retrieve a single memory + temporal history
+const m = await client.getMemory(memoryId);
+const history = await client.getMemoryHistory(memoryId);   // SCD-2 versions
 
-```typescript
+// update in place (writes a new SCD-2 version)
+await client.updateMemory(memoryId, {
+  content: "...",
+  metadata: { /* ... */ },
+  importance: 0.9,
+});
+
+// recall — defaults to AUTO strategy router
 const results = await client.recall({
-  agentId: 'agent-1',
-  query: 'What does the user prefer?',
-  memoryType: 'semantic',    // Optional: filter by type
-  topK: 5,                   // Max results (default: 10)
+  agentId: "agent-1",
+  query: "What does the user prefer?",
+  topK: 5,
+  memoryType: "semantic",                 // optional filter
+  timeRange: { start: "2026-03-01", end: "2026-03-31" },  // optional
+  asOf: "2026-03-15T12:00:00Z",          // optional point-in-time
+  metadataFilter: { category: "preferences" },
+  conversationId: "conv_abc",            // scope to one conversation (Phase G)
+  strategy: "VECTOR",                    // override AUTO; see verbs page
+  role: "support_agent",                 // for redaction filter (Phase F slice 2)
 });
 
-for (const r of results) {
-  console.log(`${r.content} (relevance: ${r.relevanceScore.toFixed(2)})`);
-}
+// forget — soft (default) or hard
+await client.forget({ agentId: "agent-1", memoryId: "mem_xyz" });
+await client.forget({ agentId: "agent-1", memoryId: "mem_xyz", hardDelete: true });
+
+// audit
+const events = await client.audit({ agentId: "agent-1", operation: "store", limit: 50 });
 ```
 
-### Recall with filters
+### Conversation memory (Phase G slice 2)
 
 ```typescript
-// Temporal filter
-const results = await client.recall({
-  agentId: 'agent-1',
-  query: 'pricing conversations',
-  memoryType: 'episodic',
-  timeRange: { start: '2026-03-01', end: '2026-03-31' },
+const conv = await client.createConversation({
+  agentId: "agent-1",
+  userId: "user_abc",
+  title: "Allergy intake",
+  summaryCadence: 10,
 });
 
-// Point-in-time query
-const results = await client.recall({
-  agentId: 'agent-1',
-  query: 'user preferences',
-  asOf: '2026-03-15T12:00:00Z',
+// Append a turn — server bumps turn_count, returns turnIndex + needsSummary
+const turn = await client.addTurn(conv.id, {
+  role: "user",
+  content: "I'm allergic to penicillin",
 });
 
-// Metadata filter
-const results = await client.recall({
-  agentId: 'agent-1',
-  query: 'preferences',
-  metadataFilter: { category: 'preferences' },
+// List turns (paginated by afterTurn + limit)
+const turns = await client.listTurns(conv.id, { afterTurn: 0, limit: 50 });
+
+// Scope recall to this conversation
+const scoped = await client.recall({
+  agentId: "agent-1",
+  query: "allergies",
+  conversationId: conv.id,
+});
+
+// Soft-delete (turn Memos stay queryable via standard recall)
+await client.deleteConversation(conv.id);
+await client.getConversation(conv.id);  // 404 once deleted
+```
+
+### Forge — ingest, distill, refine
+
+```typescript
+// ingest (auto-chains into forge_distill when INGEST_AUTO_DISTILL=true server-side)
+const job = await client.ingestText({ content: "...", agentId: "agent-1", datasetId: "ds_abc" });
+const j2  = await client.ingestUrl({ url: "https://example.com/article", agentId: "agent-1" });
+const state = await client.getIngestStatus(job.jobId);
+
+// distill manually
+const dj = await client.distill({ memoryIds: ["mem_1", "mem_2"], agentId: "agent-1" });
+const ds = await client.getDistillStatus(dj.jobId);
+
+// refine the graph in place (admin-scoped)
+const rj = await client.refine({ datasetId: "ds_abc" });
+const rs = await client.getRefineStatus(rj.jobId);
+```
+
+### Tenant self-management (v0.20.3)
+
+```typescript
+// Read current resolved budgets (defaults + your overrides merged)
+const view = await client.getMyBudgets();
+console.log(view.resolved.dailyTokens, view.overrides.dailyTokens);
+
+// Set partial overrides — fields you omit fall through to server defaults
+await client.setMyBudgets({
+  dailyTokens: 500_000,
+  monthlyLlmCalls: 10_000,
 });
 ```
 
-## Forget a Memory
-
-### Soft delete
-
-Marks the memory as deleted. It no longer appears in recall results but is retained for audit purposes.
+### Sessions
 
 ```typescript
-await client.forget({ agentId: 'agent-1', memoryId: 'mem_a1b2c3d4' });
+const session = await client.startSession({ agentId: "agent-1" });
+// ... do work ...
+await client.endSession(session.id);
 ```
 
-### Hard delete (GDPR-compliant)
+## Framework integrations
 
-Permanently removes the memory and all associated data from every storage layer.
+Two adapters ship in `@z3rno/sdk` and lazy-load their host runtimes — no extra install needed for the SDK itself.
 
-```typescript
-await client.forget({
-  agentId: 'agent-1',
-  memoryId: 'mem_a1b2c3d4',
-  hard: true,
-});
-```
-
-<Warning>
-Hard deletes are irreversible. The memory content is permanently purged from PostgreSQL, pgvector, Apache AGE, and Valkey.
-</Warning>
-
-### Bulk delete
+### Vercel AI SDK
 
 ```typescript
-// Soft delete all memories for an agent
-await client.forgetAll({ agentId: 'agent-1' });
+import { Z3rnoVercelMemory } from "@z3rno/sdk";
 
-// Hard delete all memories for an agent
-await client.forgetAll({ agentId: 'agent-1', hard: true });
-```
-
-## Audit Trail
-
-Query the audit log to see the full history of memory operations.
-
-```typescript
-const events = await client.audit({
-  agentId: 'agent-1',
-  eventType: 'store',        // Optional: 'store' | 'recall' | 'update' | 'forget'
-  limit: 50,
+const memory = new Z3rnoVercelMemory({
+  client,
+  agentId: "vercel-agent",
+  conversationId: "conv_abc",
 });
 
-for (const event of events) {
-  console.log(`${event.timestamp} | ${event.eventType} | ${event.memoryId}`);
-}
+// Vercel AI shape — drops into useChat / streamText / etc.
+const messages = await memory.messages();
+await memory.appendUserMessage("hello");
+await memory.appendAssistantMessage("hi");
+await memory.appendToolMessage({ /* CoreToolMessage */ });
 ```
 
-### Version history
+### Mastra-JS
 
 ```typescript
-const history = await client.history({ memoryId: 'mem_a1b2c3d4' });
+import { Z3rnoMastraMemory } from "@z3rno/sdk";
 
-for (const version of history) {
-  console.log(`v${version.version}: ${version.content}`);
-  console.log(`  Active: ${version.validFrom} → ${version.validTo ?? 'current'}`);
-}
+const memory = new Z3rnoMastraMemory({
+  client,
+  agentId: "mastra-agent",
+  conversationId: "conv_abc",
+});
+
+const msgs = await memory.getMessages();
+await memory.addMessage({ role: "user", content: "..." });
+await memory.clear();  // no-op by design — audit history survives
 ```
 
-## Error Handling
+## Models
 
-The SDK throws typed errors that extend `Z3rnoError`:
+Zod schemas + inferred TypeScript types are exported by name:
 
 ```typescript
-import {
-  Z3rnoError,
-  AuthenticationError,
-  NotFoundError,
-  RateLimitError,
-} from '@z3rno/sdk';
+import type {
+  // memories
+  MemoryResponse, MemoryHistoryResponse, MemoryVersion,
+  StoreMemoryRequest, BatchStoreResponse,
+  RecallResponse, RecallResultItem,
+  ForgetResponse,
+  // audit + sessions
+  AuditEntry, AuditPageResponse,
+  SessionResponse, EndSessionResponse,
+  // conversations (Phase G)
+  ConversationResponse, TurnResponse, TurnAddResponse, TurnListResponse,
+  // Forge (ingest / distill / refine)
+  IngestJobResponse, IngestJobStatusResponse,
+  DistillJobResponse, DistillJobStatusResponse,
+  RefineJobResponse, RefineJobStatusResponse,
+  // budgets (v0.20)
+  TenantBudgets, TenantBudgetsView,
+  // enums
+  MemoryType, RelationshipType, RetrievalStrategy,
+} from "@z3rno/sdk";
+```
+
+Zod parses every response at runtime — you get both compile-time TypeScript types and immediate failure on unexpected server payloads instead of silent downstream issues.
+
+## Exceptions
+
+All inherit from `Z3rnoError`:
+
+| Class | Maps to | Extra |
+|---|---|---|
+| `AuthenticationError` | 401 | — |
+| `ValidationError` | 400 / 422 | — |
+| `NotFoundError` | 404 | — |
+| `RateLimitError` | 429 | `retryAfter` (seconds) parsed from header |
+| `ServerError` | 5xx | Surfaces the server error id for log correlation |
+| `Z3rnoConnectionError` | network | Underlying `cause` exposed |
+| `Z3rnoTimeoutError` | timeout | Per-request timeout exceeded |
+
+```typescript
+import { Z3rnoError, RateLimitError } from "@z3rno/sdk";
 
 try {
-  const results = await client.recall({ agentId: 'agent-1', query: 'test' });
-} catch (error) {
-  if (error instanceof AuthenticationError) {
-    // Invalid or expired API key
-    console.error('Check your API key');
-  } else if (error instanceof NotFoundError) {
-    // Agent or memory not found
-    console.error('Agent does not exist');
-  } else if (error instanceof RateLimitError) {
-    // Rate limit exceeded
-    console.error(`Rate limited. Retry after ${error.retryAfter} seconds`);
-  } else if (error instanceof Z3rnoError) {
-    // Any other Z3rno error
-    console.error(`Z3rno error: ${error.message} (code: ${error.code})`);
+  await client.store({ agentId: "agent-1", content: "..." });
+} catch (e) {
+  if (e instanceof RateLimitError) {
+    console.log("retry after", e.retryAfter, "seconds");
+  } else if (e instanceof Z3rnoError) {
+    console.error("z3rno error:", e);
   }
 }
 ```
 
-### Error class hierarchy
+## Reference
 
-```
-Z3rnoError
-  ├── AuthenticationError      // 401 — invalid API key
-  ├── AuthorisationError       // 403 — insufficient permissions
-  ├── NotFoundError            // 404 — resource not found
-  ├── ValidationError          // 422 — invalid request parameters
-  ├── RateLimitError           // 429 — rate limit exceeded
-  ├── ConflictError            // 409 — duplicate or version conflict
-  └── ServerError              // 5xx — internal server error
-```
-
-## Zod Schema Validation
-
-All API responses are validated at runtime using [Zod](https://zod.dev) schemas. This means you get both compile-time TypeScript types and runtime validation — if the server returns an unexpected shape, the SDK throws a `ValidationError` immediately rather than failing silently downstream.
-
-```typescript
-import { MemorySchema, RecallResultSchema } from '@z3rno/sdk/schemas';
-
-// Schemas are exported if you need to validate data yourself
-const parsed = MemorySchema.parse(rawData);
-```
-
-The SDK uses Zod internally for every response. You do not need to call `.parse()` yourself unless you are working with raw data outside the client.
-
-### Type exports
-
-All types are inferred from Zod schemas and exported for convenience:
-
-```typescript
-import type { Memory, RecallResult, AuditEvent, Session } from '@z3rno/sdk';
-```
-
-## Session Management
-
-```typescript
-// Start a session
-const session = await client.startSession({ agentId: 'agent-1' });
-
-// Store working memory within the session
-await client.store({
-  agentId: 'agent-1',
-  content: 'User is asking about pricing.',
-  memoryType: 'working',
-  sessionId: session.id,
-});
-
-// End the session — working memories are consolidated into episodic memory
-await client.endSession({ sessionId: session.id });
-```
-
-<Note>
-When a session ends, Z3rno automatically consolidates working memories into episodic memories. You do not need to manually manage this transition.
-</Note>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Memory Types" icon="brain" href="/concepts/memory-types">
-    Understand the four memory types and when to use each one.
-  </Card>
-  <Card title="Python SDK" icon="python" href="/sdks/python">
-    Using Python? See the Python SDK guide.
-  </Card>
-</CardGroup>
+- **Package:** [`@z3rno/sdk` on npm](https://www.npmjs.com/package/@z3rno/sdk) — `0.7.0`
+- **Source:** [github.com/the-ai-project-co/z3rno-sdk-typescript](https://github.com/the-ai-project-co/z3rno-sdk-typescript)
+- **Server:** [Components → z3rno-server](/components/server) — the API the SDK calls
+- **Verbs:** [Concepts → The Z3rno Verbs](/concepts/verbs) — canonical seven-verb table
+- **MCP variant:** [Integrations → Anthropic MCP](/integrations/anthropic-mcp) — same surface, exposed as MCP tools

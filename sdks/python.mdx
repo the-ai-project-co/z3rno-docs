@@ -1,266 +1,257 @@
 ---
 title: Python SDK
-description: "Install the Z3rno Python SDK and start storing, recalling, and managing agent memories."
+description: "The official Python SDK for Z3rno: sync + async clients, every server verb (store / recall / forget / audit / ingest / distill / refine), conversation memory, streaming recall, and tenant self-management."
 ---
 
 # Python SDK
 
-The Z3rno Python SDK provides a synchronous and asynchronous client for interacting with the Z3rno memory API.
+The Z3rno Python SDK is a thin httpx-based client for the z3rno-server HTTP API. It ships sync and async clients with **identical surfaces** — every method on `Z3rnoClient` exists as an `async def` on `AsyncZ3rnoClient`, plus one extra (`recall_stream_sse`) that's async-only.
 
-## Installation
+**Current version:** `z3rno 0.7.0` on PyPI. Requires Python 3.11+.
+
+## Install
 
 ```bash
 pip install z3rno
+
+# With framework adapters (each lazy-loads its host package — install only what you use)
+pip install 'z3rno[langchain]'
+pip install 'z3rno[llama-index]'
 ```
 
-Requires Python 3.9+.
-
-## Client Creation
+## Client
 
 ```python
 from z3rno import Z3rnoClient
 
 client = Z3rnoClient(
-    base_url="http://localhost:8000",      # or https://api.z3rno.dev
-    api_key="z3rno_sk_prod_your_key_here",
+    base_url="http://localhost:8000",
+    api_key="z3rno_sk_test_localdev",   # default dev key on a fresh local server
 )
 ```
 
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `base_url` | Yes | — | Z3rno server URL |
-| `api_key` | Yes | — | Your organisation's API key |
-| `timeout` | No | `30` | Request timeout in seconds |
-| `max_retries` | No | `3` | Number of retries on transient failures |
+| Parameter | Default | Notes |
+|---|---|---|
+| `base_url` | required | z3rno-server URL. Local dev: `http://localhost:8000`. |
+| `api_key` | required | API key. Default dev: `z3rno_sk_test_localdev`. |
+| `timeout` | `30.0` | Per-request timeout (seconds). |
+| `max_retries` | `3` | Tenacity retries on transient failures. |
 
-## Store a Memory
-
-```python
-memory = client.store(
-    agent_id="agent-1",
-    content="User prefers dark mode and uses Python 3.12.",
-    memory_type="semantic",              # working | episodic | semantic | procedural
-    metadata={"category": "preferences"},
-    importance=0.85,                     # Optional: 0.0 - 1.0
-)
-
-print(memory.id)          # mem_a1b2c3d4...
-print(memory.created_at)  # 2026-04-19T10:30:00Z
-```
-
-## Recall Memories
-
-```python
-results = client.recall(
-    agent_id="agent-1",
-    query="What does the user prefer?",
-    memory_type="semantic",    # Optional: filter by type
-    top_k=5,                   # Max results (default: 10)
-)
-
-for r in results:
-    print(r.content, "(relevance:", round(r.relevance_score, 2), ")")
-```
-
-### Recall with filters
-
-```python
-# Temporal filter
-results = client.recall(
-    agent_id="agent-1",
-    query="pricing conversations",
-    memory_type="episodic",
-    time_range={"start": "2026-03-01", "end": "2026-03-31"},
-)
-
-# Point-in-time query
-results = client.recall(
-    agent_id="agent-1",
-    query="user preferences",
-    as_of="2026-03-15T12:00:00Z",
-)
-
-# Metadata filter
-results = client.recall(
-    agent_id="agent-1",
-    query="preferences",
-    metadata_filter={"category": "preferences"},
-)
-```
-
-## Forget a Memory
-
-### Soft delete
-
-Marks the memory as deleted. It no longer appears in recall results but is retained for audit purposes.
-
-```python
-client.forget(agent_id="agent-1", memory_id="mem_a1b2c3d4")
-```
-
-### Hard delete (GDPR-compliant)
-
-Permanently removes the memory and all associated data from every storage layer.
-
-```python
-client.forget(
-    agent_id="agent-1",
-    memory_id="mem_a1b2c3d4",
-    hard=True,
-)
-```
-
-<Warning>
-Hard deletes are irreversible. The memory content is permanently purged from PostgreSQL, pgvector, Apache AGE, and Valkey.
-</Warning>
-
-### Bulk delete
-
-```python
-# Soft delete all memories for an agent
-client.forget_all(agent_id="agent-1")
-
-# Hard delete all memories for an agent
-client.forget_all(agent_id="agent-1", hard=True)
-```
-
-## Audit Trail
-
-Query the audit log to see the full history of memory operations for an agent.
-
-```python
-events = client.audit(
-    agent_id="agent-1",
-    event_type="store",        # Optional: store | recall | update | forget
-    limit=50,
-)
-
-for event in events:
-    print(event.timestamp, "|", event.event_type, "|", event.memory_id)
-```
-
-### Version history
-
-Retrieve the full version history of a specific memory.
-
-```python
-history = client.history(memory_id="mem_a1b2c3d4")
-
-for version in history:
-    print("v" + str(version.version) + ":", version.content)
-    print("  Active:", version.valid_from, "→", version.valid_to or "current")
-```
-
-## Session Management
-
-Sessions group related interactions and manage working memory lifecycle.
-
-```python
-# Start a session
-session = client.start_session(agent_id="agent-1")
-
-# Store working memory within the session
-client.store(
-    agent_id="agent-1",
-    content="User is asking about pricing.",
-    memory_type="working",
-    session_id=session.id,
-)
-
-# End the session — working memories are consolidated into episodic memory
-client.end_session(session_id=session.id)
-```
-
-<Note>
-When a session ends, Z3rno automatically consolidates working memories into episodic memories. You do not need to manually manage this transition.
-</Note>
-
-## Error Handling
-
-The SDK raises typed exceptions that inherit from `Z3rnoError`:
-
-```python
-from z3rno import Z3rnoError, AuthenticationError, NotFoundError, RateLimitError
-
-try:
-    results = client.recall(agent_id="agent-1", query="test")
-except AuthenticationError:
-    # Invalid or expired API key
-    print("Check your API key")
-except NotFoundError:
-    # Agent or memory not found
-    print("Agent does not exist")
-except RateLimitError as e:
-    # Rate limit exceeded
-    print("Rate limited. Retry after", e.retry_after, "seconds")
-except Z3rnoError as e:
-    # Any other Z3rno error
-    print("Z3rno error:", e.message, "(code:", e.code, ")")
-```
-
-### Exception hierarchy
-
-```
-Z3rnoError
-  ├── AuthenticationError      # 401 — invalid API key
-  ├── AuthorisationError       # 403 — insufficient permissions
-  ├── NotFoundError            # 404 — resource not found
-  ├── ValidationError          # 422 — invalid request parameters
-  ├── RateLimitError           # 429 — rate limit exceeded
-  ├── ConflictError            # 409 — duplicate or version conflict
-  └── ServerError              # 5xx — internal server error
-```
-
-## Async Client
-
-For async applications, use `AsyncZ3rnoClient`. The API is identical — every method is an `async` coroutine.
+Async variant:
 
 ```python
 from z3rno import AsyncZ3rnoClient
 
-client = AsyncZ3rnoClient(
-    base_url="http://localhost:8000",
-    api_key="z3rno_sk_prod_your_key_here",
-)
-
-# All methods are awaitable
-memory = await client.store(
-    agent_id="agent-1",
-    content="User prefers dark mode.",
-    memory_type="semantic",
-)
-
-results = await client.recall(
-    agent_id="agent-1",
-    query="What does the user prefer?",
-)
-
-# Don't forget to close the client when done
-await client.close()
+async with AsyncZ3rnoClient(base_url="...", api_key="...") as client:
+    memory = await client.store(agent_id="agent-1", content="...")
 ```
 
-### As a context manager
+## Method reference
+
+### Memory primitives
 
 ```python
-async with AsyncZ3rnoClient(
-    base_url="http://localhost:8000",
-    api_key="z3rno_sk_prod_your_key_here",
-) as client:
-    memory = await client.store(
-        agent_id="agent-1",
-        content="User prefers dark mode.",
-        memory_type="semantic",
-    )
-    # Client is automatically closed when the block exits
+# store / batch
+memory = client.store(
+    agent_id="agent-1",
+    content="User prefers dark mode and Python 3.12.",
+    memory_type="semantic",                # working | episodic | semantic | procedural
+    metadata={"category": "preferences"},
+    importance=0.85,
+)
+
+batch = client.store_batch(items=[{"agent_id": "...", "content": "..."}])
+
+# retrieve a single memory + temporal history
+memory = client.get_memory(memory_id)
+history = client.get_memory_history(memory_id)   # SCD-2 versions
+
+# update content/metadata/importance in place (writes a new SCD-2 version)
+client.update_memory(memory_id, content="...", metadata={...}, importance=0.9)
+
+# recall — defaults to AUTO strategy router
+results = client.recall(
+    agent_id="agent-1",
+    query="What does the user prefer?",
+    top_k=5,
+    memory_type="semantic",                # optional filter
+    time_range={"start": "2026-03-01", "end": "2026-03-31"},  # optional
+    as_of="2026-03-15T12:00:00Z",          # optional point-in-time
+    metadata_filter={"category": "preferences"},
+    conversation_id="conv_abc",            # scope to one conversation (Phase G)
+    strategy="VECTOR",                     # override AUTO; see verbs page for full list
+    role="support_agent",                  # for redaction filter (Phase F slice 2)
+)
+
+# forget — soft (default) or hard
+client.forget(agent_id="agent-1", memory_id="mem_xyz")
+client.forget(agent_id="agent-1", memory_id="mem_xyz", hard=True)   # GDPR; emits forget cert
+
+# audit
+events = client.audit(agent_id="agent-1", operation="store", limit=50)
 ```
 
-## Next Steps
+### Streaming recall (Phase G slice 5)
 
-<CardGroup cols={2}>
-  <Card title="Memory Types" icon="brain" href="/concepts/memory-types">
-    Understand the four memory types and when to use each one.
-  </Card>
-  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
-    Using TypeScript? See the TypeScript SDK guide.
-  </Card>
-</CardGroup>
+```python
+# Sync iterator — yields SSE events as they arrive
+for evt in client.recall_stream(agent_id="agent-1", query="...", strategy="TRACE"):
+    if evt["event"] == "step":
+        print("step:", evt["data"])
+    elif evt["event"] == "done":
+        print("done:", evt["data"]["count"], "results")
+
+# Async-only convenience: yields parsed dicts
+async for evt in client.recall_stream_sse(agent_id="agent-1", query="..."):
+    ...
+```
+
+### Conversation memory (Phase G slice 2)
+
+```python
+conv = client.create_conversation(
+    agent_id="agent-1",
+    user_id="user_abc",
+    title="Allergy intake",
+    summary_cadence=10,
+)
+
+# Append a turn — server bumps turn_count, returns turn_index + needs_summary
+turn = client.add_turn(conv.id, role="user", content="I'm allergic to penicillin")
+
+# List turns (paginated by after_turn + limit)
+turns = client.list_turns(conv.id, after_turn=0, limit=50)
+
+# Scope recall to this conversation
+results = client.recall(agent_id="agent-1", query="allergies", conversation_id=conv.id)
+
+# Soft-delete (turn Memos stay queryable via standard recall)
+client.delete_conversation(conv.id)
+client.get_conversation(conv.id)              # 404 once deleted
+```
+
+### Forge — ingest, distill, refine
+
+```python
+# ingest (auto-chains into forge_distill when INGEST_AUTO_DISTILL=true server-side)
+job = client.ingest_text(content="...", agent_id="agent-1", dataset_id="ds_abc")
+job = client.ingest_url(url="https://example.com/article", agent_id="agent-1")
+state = client.get_ingest_status(job.job_id)
+
+# distill manually
+job = client.distill(memory_ids=["mem_1", "mem_2"], agent_id="agent-1")
+state = client.get_distill_status(job.job_id)
+
+# refine the graph in place (admin-scoped on the server)
+job = client.refine(dataset_id="ds_abc")
+state = client.get_refine_status(job.job_id)
+```
+
+### Tenant self-management (v0.20.3)
+
+```python
+from z3rno import TenantBudgets
+
+# Read current resolved budgets (defaults + your overrides merged)
+view = client.get_my_budgets()
+print(view.resolved.daily_tokens, view.overrides.daily_tokens)
+
+# Set partial overrides — fields you omit fall through to server defaults
+client.set_my_budgets(TenantBudgets(daily_tokens=500_000, monthly_llm_calls=10_000))
+
+# Plain dict also works
+client.set_my_budgets({"daily_embeddings": 1_000_000})
+```
+
+### Sessions
+
+```python
+session = client.start_session(agent_id="agent-1")
+# ... do work ...
+client.end_session(session.id)
+
+# Context manager
+with client.session(agent_id="agent-1") as session:
+    ...
+```
+
+## Framework integrations
+
+Each integration lives in `z3rno.integrations.*` and lazy-imports its host package — installing `z3rno` alone is enough until you actually use one.
+
+| Integration | Module | Install extra | Use case |
+|---|---|---|---|
+| LangChain | `z3rno.integrations.langchain` | `pip install 'z3rno[langchain]'` | Chat message history + retriever |
+| LlamaIndex | `z3rno.integrations.llama_index` | `pip install 'z3rno[llama-index]'` | `Z3rnoChatMemoryBuffer` + `Z3rnoBaseRetriever` |
+| Anthropic | `z3rno.integrations.anthropic` | — | Helpers for stamping Claude tool-use turns |
+| OpenAI Agents | `z3rno.integrations.openai_agents` | — | Memory provider for the Agents SDK |
+| CrewAI | `z3rno.integrations.crewai` | — | Tool definitions for CrewAI agents |
+| Mastra | `z3rno.integrations.mastra` | — | Python port of the Mastra-JS memory shape |
+
+LangChain example:
+
+```python
+from z3rno.integrations.langchain import Z3rnoChatMessageHistory
+
+history = Z3rnoChatMessageHistory(
+    client=client,
+    agent_id="langchain-agent",
+    conversation_id="conv_abc",   # Phase G — scopes the history to one conversation
+)
+history.add_user_message("What is Z3rno?")
+history.add_ai_message("Z3rno is a memory database for AI agents.")
+```
+
+See [LangChain integration](/integrations/langchain) for the full agent-side wiring.
+
+## Models
+
+Pydantic models exported from `z3rno`:
+
+```python
+from z3rno import (
+    Memory, MemoryType, MemoryVersion, RelationshipType, RetrievalStrategy,
+    RecallResponse, RecallResultItem,
+    AuditEntry, AuditPageResponse,
+    Session, EndSessionResponse,
+    Conversation, ConversationResponse, TurnResponse, TurnAddResponse, TurnListResponse,
+    IngestJobResponse, IngestJobStatusResponse,
+    DistillJobResponse, DistillJobStatusResponse,
+    RefineJobResponse, RefineJobStatusResponse,
+    ForgetResponse, BatchStoreResponse,
+    TenantBudgets, TenantBudgetsView,
+)
+```
+
+## Exceptions
+
+All inherit from `Z3rnoError`:
+
+| Class | Maps to | When |
+|---|---|---|
+| `AuthenticationError` | 401 | Bad / missing API key. |
+| `AuthorisationError` | 403 | Key valid but lacks scope (admin-only routes, gated Cypher). |
+| `ValidationError` | 400 / 422 | Bad request shape. |
+| `NotFoundError` | 404 | Memory / conversation / job not found. |
+| `ConflictError` | 409 | Duplicate dataset name, etc. |
+| `RateLimitError` | 429 | Includes `retry_after` from headers. |
+| `ServerError` | 5xx | Surfaces the server error id for log correlation. |
+
+```python
+from z3rno import Z3rnoError, RateLimitError
+
+try:
+    client.store(agent_id="agent-1", content="...")
+except RateLimitError as e:
+    print("retry after", e.retry_after, "seconds")
+except Z3rnoError as e:
+    print("z3rno error:", e)
+```
+
+## Reference
+
+- **Package:** [`z3rno` on PyPI](https://pypi.org/project/z3rno/) — `>=0.7.0`
+- **Source:** [github.com/the-ai-project-co/z3rno-sdk-python](https://github.com/the-ai-project-co/z3rno-sdk-python)
+- **Server:** [Components → z3rno-server](/components/server) — the API the SDK calls
+- **Verbs:** [Concepts → The Z3rno Verbs](/concepts/verbs) — canonical seven-verb table
+- **MCP variant:** [Integrations → Anthropic MCP](/integrations/anthropic-mcp) — same SDK, exposed as MCP tools
