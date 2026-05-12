@@ -1,133 +1,278 @@
 ---
 title: Configuration
-description: "Complete environment variable reference for Z3rno."
+description: "Complete environment variable reference for z3rno-server, organized by feature. Every flag below maps to a pydantic-settings field in z3rno_server.config."
 ---
 
-# Configuration
+# Configuration reference
 
-Z3rno is configured entirely through environment variables. This page documents every available setting.
+Every Z3rno surface beyond the **always-on** base (`store` / `recall` / `forget` / `audit` / sessions / api-keys / conversations / limits / graph) is **opt-in via a gating flag**. Default values produce a working local-dev stack against `docker-compose.dev.yml`; flip the gates as you light up Forge / Ingest / Refine / forget-proof / OpenTelemetry / etc.
+
+<Note>
+Source of truth: [`z3rno-server/src/z3rno_server/config.py`](https://github.com/the-ai-project-co/z3rno-server/blob/main/src/z3rno_server/config.py). Variables names are case-insensitive; values are read from environment or `.env` file. **As of v0.20.0.**
+</Note>
 
 ## Database
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://z3rno:z3rno@localhost:5432/z3rno` | PostgreSQL connection string |
-| `DATABASE_POOL_SIZE` | `10` | Connection pool size |
-| `DATABASE_MAX_OVERFLOW` | `20` | Maximum overflow connections beyond pool size |
-| `DATABASE_POOL_TIMEOUT` | `30` | Seconds to wait for a connection from the pool |
-| `DATABASE_POOL_RECYCLE` | `3600` | Seconds before a connection is recycled |
-| `DATABASE_ECHO` | `false` | Log all SQL statements (for debugging) |
+| `DATABASE_URL` | `postgresql+asyncpg://z3rno:z3rno_dev_password@localhost:5432/z3rno` | Async driver required (`asyncpg`). |
+| `DATABASE_POOL_SIZE` | `20` | SQLAlchemy connection pool. |
+| `DATABASE_MAX_OVERFLOW` | `10` | Pool overflow above `DATABASE_POOL_SIZE`. |
+| `DATABASE_READ_URL` | `""` | **Opt-in (Phase G slice 1).** When set, pure-read GET endpoints route SELECTs to the replica. WAL replay lag is checked at session acquire; over-threshold falls back to primary. |
+| `READ_REPLICA_LAG_CHECK_ENABLED` | `true` | Honoured only when `DATABASE_READ_URL` is set. |
+| `READ_REPLICA_LAG_THRESHOLD_SECONDS` | `5.0` | Replica skipped when lag exceeds this. |
 
-<Warning>
-The PostgreSQL instance must have `pgvector` and `Apache AGE` extensions installed and enabled. Z3rno runs `CREATE EXTENSION IF NOT EXISTS` on startup.
-</Warning>
+## Valkey / Redis
 
-## Valkey
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `VALKEY_URL` | `redis://localhost:6379/0` | Valkey connection URL (falls back to `REDIS_URL` for backward compat) |
-| `VALKEY_MAX_CONNECTIONS` | `20` | Maximum connections in the Valkey pool |
-| `CELERY_BROKER_URL` | Same as `VALKEY_URL` | Celery task broker URL (defaults to `VALKEY_URL` if not set) |
-| `CELERY_RESULT_BACKEND` | Same as `VALKEY_URL` | Celery result backend URL |
+| `VALKEY_URL` | `""` | Preferred. Falls back to `REDIS_URL` when empty. |
+| `REDIS_URL` | `redis://localhost:6379/0` | Back-compat alias. |
 
 ## Embedding
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `EMBEDDING_PROVIDER` | `openai` | Embedding provider: `openai`, `cohere`, `local` |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name for the embedding provider |
-| `EMBEDDING_DIMENSIONS` | `1536` | Vector dimensions (must match model output) |
-| `OPENAI_API_KEY` | — | API key for OpenAI embeddings |
-| `COHERE_API_KEY` | — | API key for Cohere embeddings |
-| `EMBEDDING_BATCH_SIZE` | `100` | Number of texts to embed per API call |
+| `EMBEDDING_PROVIDER` | `litellm` | Routes embedding calls through LiteLLM. |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI default. Output dim is hard-coded at 1536 (ADR-001). |
+| `OPENAI_API_KEY` | `""` | Required for OpenAI embeddings. Also the fallback for `LLM_API_KEY` and `MULTIMODAL_API_KEY`. |
 
-<Note>
-When switching embedding providers or models, you must re-embed all existing memories. Vectors from different models are not compatible.
-</Note>
+## Authentication
 
-## Server
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `Z3RNO_HOST` | `0.0.0.0` | Host to bind the server to |
-| `Z3RNO_PORT` | `8000` | Port to bind the server to |
-| `Z3RNO_WORKERS` | `4` | Number of Uvicorn workers |
-| `Z3RNO_API_KEY` | `z3rno_sk_test_localdev` | API key for authenticating requests |
-| `Z3RNO_CORS_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
+| `Z3RNO_API_KEY` | `""` | **Dev bypass.** When set, this key authenticates without a DB lookup. The fresh-local-server default is `z3rno_sk_test_localdev` — rotate it for any non-localhost deploy. Production keys are generated via `POST /v1/api-keys`. |
+| `Z3RNO_DEV_ORG_ID` | `""` | Org id stamped on requests authenticated by `Z3RNO_API_KEY`. |
+| `API_KEY_HEADER` | `X-API-Key` | Alternative to `Authorization: Bearer`. |
+| `API_KEY_CACHE_TTL` | `60` | Valkey cache TTL (seconds) for verified API keys. |
+| `JWT_SECRET_KEY` | `""` | HMAC secret for dashboard JWT auth. Required when JWT auth is in use. |
+| `JWT_ALGORITHM` | `HS256` | |
+| `JWT_EXPIRY_MINUTES` | `60` | |
 
 ## Rate limiting
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
-| `RATE_LIMIT_REQUESTS` | `100` | Maximum requests per window |
-| `RATE_LIMIT_WINDOW` | `60` | Window size in seconds |
-| `RATE_LIMIT_BURST` | `20` | Burst allowance above the steady rate |
-| `RATE_LIMIT_BACKEND` | `valkey` | Rate limit storage: `valkey` or `memory` |
+| `RATE_LIMIT_ENABLED` | `true` | Toggles the entire middleware. |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Per-API-key request budget. |
+| `RATE_LIMIT_BURST` | `10` | Burst allowance above the steady rate. |
 
-## Memory lifecycle
+## Server / CORS / logging
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `IMPORTANCE_DECAY_INTERVAL` | `3600` | Seconds between importance decay runs |
-| `IMPORTANCE_DECAY_RATE` | `0.01` | Decay rate per interval (0.0 - 1.0) |
-| `MEMORY_TTL_DEFAULT` | `0` | Default memory TTL in seconds (0 = no expiry) |
-| `MEMORY_RETENTION_CAP` | `10000` | Maximum memories per agent before pruning |
+| `SERVER_HOST` | `0.0.0.0` | |
+| `SERVER_PORT` | `8000` | |
+| `DEBUG` | `false` | |
+| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated. |
+| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL`. |
+| `LOG_FORMAT` | `json` | `json` or `text`. |
 
-## Logging
+## Celery backpressure
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 |---|---|---|
-| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warning`, `error`, `critical` |
-| `LOG_FORMAT` | `json` | Log format: `json` or `text` |
-| `LOG_INCLUDE_TIMESTAMP` | `true` | Include ISO 8601 timestamp in log entries |
-| `SENTRY_DSN` | — | Sentry DSN for error tracking (optional) |
+| `CELERY_QUEUE_DEPTH_THRESHOLD` | `1000` | When broker depth exceeds this, `/v1/ingest*` returns 503 with `Retry-After`. Set to `0` to disable. |
+| `CELERY_QUEUE_DEPTH_RETRY_AFTER_SECONDS` | `30` | Value of the `Retry-After` header on backpressure 503s. |
 
-## Multi-tenancy
+---
 
-| Variable | Default | Description |
+# Phase A — Forge (`DISTILL_ENABLED`)
+
+The Forge pipeline is dormant unless `DISTILL_ENABLED=true`. With the flag off, `/v1/distill` is not registered and `z3rno.forge_distill` self-rejects.
+
+| Variable | Default | Notes |
 |---|---|---|
-| `MULTI_TENANCY_ENABLED` | `true` | Enable multi-tenant isolation |
-| `RLS_ENABLED` | `true` | Enable PostgreSQL Row-Level Security |
+| `DISTILL_ENABLED` | `false` | Master gate. |
+| `LLM_PROVIDER` | `openai` | `openai` / `anthropic` / `gemini` / `bedrock` / `ollama`. |
+| `LLM_MODEL` | `openai/gpt-4o-mini` | LiteLLM-namespaced model id. |
+| `LLM_API_KEY` | `""` | Falls back to `OPENAI_API_KEY` when provider is `openai`. |
+| `LLM_TIMEOUT_SECONDS` | `30.0` | Per-call timeout. |
+| `LLM_MAX_RETRIES` | `3` | Tenacity retry budget. |
+| `STRUCTURED_OUTPUT_FRAMEWORK` | `instructor` | Only `instructor` is shipped. |
+| `DISTILL_CHUNK_SIZE` | `1024` | tokens |
+| `DISTILL_CHUNK_OVERLAP` | `128` | tokens |
+| `DISTILL_MAX_CONCURRENCY` | `4` | Per-job LLM fan-out semaphore. |
+| `DISTILL_SUMMARY_STYLE` | `concise` | `concise` / `bullet` / `abstractive`. |
+| `DISTILL_PROVENANCE_REQUIRED` | `false` | **Phase F slice 1.** When true, aborts the Forge transaction if any Memo's provenance + audit chain entry can't be written. |
 
-## Example `.env` file
+# Phase B.1 — Ingestion (`INGEST_ENABLED`)
 
-```bash
-# Database
-DATABASE_URL=postgresql://z3rno:changeme@postgres:5432/z3rno
-DATABASE_POOL_SIZE=20
+`/v1/ingest`, `/v1/ingest/file`, `/v1/datasets` and the `z3rno.ingest_run` worker register only when `INGEST_ENABLED=true`.
 
-# Valkey
-VALKEY_URL=redis://valkey:6379/0
+| Variable | Default | Notes |
+|---|---|---|
+| `INGEST_ENABLED` | `false` | Master gate. |
+| `STORAGE_BACKEND` | `local` | `local` (filesystem) or `s3` (Phase B.2). |
+| `STORAGE_LOCAL_DIR` | `/var/lib/z3rno/artifacts` | |
+| `INGEST_MAX_FILE_BYTES` | `52428800` (50 MB) | Hard cap on uploads + URL responses. |
+| `INGEST_MAX_CSV_ROWS` | `10000` | |
+| `INGEST_DEFAULT_CHUNK_SIZE` | `1024` | Per-request override allowed. |
+| `INGEST_AUTO_DISTILL` | `true` | Chain ingest → `z3rno.forge_distill` when `DISTILL_ENABLED=true`. |
+| `URL_FETCH_TIMEOUT_SECONDS` | `15.0` | |
+| `URL_ALLOWED_SCHEMES` | `http,https` | |
 
-# Embedding
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=text-embedding-3-small
-OPENAI_API_KEY=sk-your-openai-key
+# Phase B.2 — Multimodal / S3 / Tavily / Playwright
 
-# Server
-Z3RNO_PORT=8000
-Z3RNO_WORKERS=4
-Z3RNO_API_KEY=z3rno_sk_prod_your-secure-key
+Each capability flips on independently — multimodal doesn't require S3, Tavily doesn't require multimodal, etc.
 
-# Rate limiting
-RATE_LIMIT_ENABLED=true
-RATE_LIMIT_REQUESTS=100
-RATE_LIMIT_WINDOW=60
+### Multimodal (image + audio)
 
-# Logging
-LOG_LEVEL=info
-LOG_FORMAT=json
-```
+| Variable | Default | Notes |
+|---|---|---|
+| `MULTIMODAL_ENABLED` | `false` | Registers image/audio loaders with the registry on worker startup. |
+| `MULTIMODAL_PROVIDER` | `litellm` | `litellm` (OpenAI vision + Whisper) / `local` (CLIP + openai-whisper, requires `z3rno-core[multimodal-local]`) / `stub`. |
+| `MULTIMODAL_VISION_MODEL` | `openai/gpt-4o-mini` | |
+| `MULTIMODAL_AUDIO_MODEL` | `whisper-1` | |
+| `MULTIMODAL_API_KEY` | `""` | Falls back to `OPENAI_API_KEY`. |
+| `MULTIMODAL_MAX_AUDIO_BYTES` | `26214400` (25 MB) | OpenAI Whisper cap. |
+| `MULTIMODAL_MAX_IMAGE_BYTES` | `20971520` (20 MB) | |
 
-## Next steps
+### S3 storage backend (`STORAGE_BACKEND=s3`)
 
-<CardGroup cols={2}>
-  <Card title="Docker Compose" icon="docker" href="/self-hosting/docker-compose">
-    Deploy Z3rno on a single machine with Docker Compose.
-  </Card>
-  <Card title="Kubernetes" icon="dharmachakra" href="/self-hosting/kubernetes">
-    Deploy Z3rno on Kubernetes with the official Helm chart.
-  </Card>
-</CardGroup>
+| Variable | Default | Notes |
+|---|---|---|
+| `S3_BUCKET` | `""` | Required when `STORAGE_BACKEND=s3`. |
+| `S3_REGION` | `us-east-1` | |
+| `S3_ENDPOINT_URL` | `""` | Empty for AWS; set for MinIO / Cloudflare R2 / DigitalOcean Spaces. |
+| `S3_PREFIX` | `z3rno` | Bucket-key prefix sandbox. |
+| `S3_ACCESS_KEY_ID` | `""` | Empty → default AWS credential chain (IRSA / IAM role). |
+| `S3_SECRET_ACCESS_KEY` | `""` | |
+
+### Tavily web search (registers `/v1/ingest/search`)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `TAVILY_API_KEY` | `""` | Set to register the search route. |
+| `TAVILY_SEARCH_DEPTH` | `basic` | `basic` / `advanced`. |
+| `TAVILY_MAX_RESULTS` | `5` | |
+
+### URL loader Playwright fallback
+
+| Variable | Default | Notes |
+|---|---|---|
+| `URL_PLAYWRIGHT_ENABLED` | `false` | Requires `pip install 'z3rno-core[playwright]'`. |
+| `URL_PLAYWRIGHT_MIN_CHARS` | `200` | Below this, fall back to Playwright. |
+| `URL_PLAYWRIGHT_TIMEOUT_SECONDS` | `30.0` | |
+
+# Phase C — Retrieval
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ALLOW_CYPHER_QUERY` | `false` | Gates `strategy="CYPHER"` on recall. Off by default — the strategy exists but is hidden behind 403 until an operator opts in. |
+
+# Phase D — Refine / Ontology / Codegraph (`REFINE_ENABLED`)
+
+`/v1/feedback`, `/v1/refine`, and the `z3rno.refine_run` worker register only when `REFINE_ENABLED=true`.
+
+### Refine
+
+| Variable | Default | Notes |
+|---|---|---|
+| `REFINE_ENABLED` | `false` | Master gate. |
+| `REFINE_SCHEDULE` | `cron:0 */6 * * *` | Per-cron-tab format; consumed by the legacy schedule wiring. Multi-tenant scheduler uses `REFINE_BEAT_INTERVAL_SECONDS` below. |
+| `FEEDBACK_WEIGHT_DECAY` | `0.95` | EMA blend factor per refine cycle. |
+| `REFINE_MAX_PER_TICK` | `10` | **v0.19.4.** Tenants picked per scheduler tick. |
+| `REFINE_BEAT_INTERVAL_SECONDS` | `0` | **v0.19.4.** Set `> 0` to enable multi-tenant beat scheduler. `0` keeps the scheduler dormant (on-demand only). |
+| `REFINE_INFER_ENABLED` | `false` | LLM stage: propose edges for under-connected Memos. |
+| `REFINE_SUMMARIZE_ENABLED` | `false` | LLM stage: per-cluster SUMMARY Memos. |
+| `REFINE_INFER_MAX_CANDIDATES` | `50` | Per-cycle LLM call cap. |
+
+### Ontology grounding (Forge integration)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `ONTOLOGY_RESOLVER` | `none` | `none` or `rdflib`. Set `rdflib` to resolve distilled entities to OWL URIs. |
+| `ONTOLOGY_FILE_PATH` | `""` | Required when `ONTOLOGY_RESOLVER=rdflib`. Path to OWL/TTL/RDF file. |
+| `ONTOLOGY_MATCHING_STRATEGY` | `fuzzy` | `exact` or `fuzzy`. |
+| `ONTOLOGY_FUZZY_THRESHOLD` | `0.80` | Minimum score for fuzzy match (`0`-`1`). |
+
+### Codegraph (Ingest integration)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `CODEGRAPH_ENABLED` | `false` | When true, ingest of code sources also runs the tree-sitter extractor. Requires `pip install 'z3rno-core[codegraph]'`. |
+| `CODEGRAPH_LANGUAGES` | `python,typescript` | Allow-list. **v0.19.5** added `go` and `rust`. |
+
+# Phase F — Differentiation
+
+### Memory-tier routing
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MEMORY_TIER_AUTO_ROUTE` | `false` | When true, the AUTO strategy asks the `MemoryTierRouter` for tiers and fans out across them. Per-request `tier_route` in the recall body always wins. |
+
+### Compliance-graded retrieval (PII redaction)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RETRIEVAL_REDACTION_ENABLED` | `false` | Role-aware regex scrubbing on recall results. |
+| `RETRIEVAL_REDACTION_RULES_PATH` | `""` | YAML rules file. Empty → built-in defaults (email / SSN / credit card / US phone). |
+
+### Forget-with-proof
+
+| Variable | Default | Notes |
+|---|---|---|
+| `FORGET_PROOF_ENABLED` | `false` | When true, every `forget()` emits a Merkle-rooted, ed25519-signed certificate; `GET /v1/forget/{cert_id}` is registered. |
+| `FORGET_PROOF_SIGNING_KEY_PATH` | `""` | PEM-encoded unencrypted Ed25519 private key. |
+| `FORGET_PROOF_SIGNER_KEY_ID` | `default` | Rotation-friendly label stamped on each cert. |
+
+### Distributed worker backends
+
+| Variable | Default | Notes |
+|---|---|---|
+| `DISTRIBUTED_BACKEND` | `celery` | `celery` / `modal` / `k8s_jobs`. Off-default backends lazy-import — missing SDK raises `JobBackendError`, not a crash. |
+| `MODAL_APP_NAME` | `z3rno` | |
+| `K8S_JOBS_NAMESPACE` | `z3rno` | |
+| `K8S_JOBS_IMAGE` | `""` | Image used when `DISTRIBUTED_BACKEND=k8s_jobs`. |
+
+# Phase G — Agent-native
+
+### Usage telemetry + budgets
+
+Zero = no cap (default). Non-zero values trip `BudgetExceededError` on Forge / refine pre-flight; the job is rejected before any LLM/embedding work.
+
+| Variable | Default |
+|---|---|
+| `USAGE_BUDGET_DAILY_TOKENS` | `0` |
+| `USAGE_BUDGET_DAILY_LLM_CALLS` | `0` |
+| `USAGE_BUDGET_DAILY_EMBEDDINGS` | `0` |
+| `USAGE_BUDGET_MONTHLY_TOKENS` | `0` |
+| `USAGE_BUDGET_MONTHLY_LLM_CALLS` | `0` |
+| `USAGE_BUDGET_MONTHLY_EMBEDDINGS` | `0` |
+
+Per-tenant overrides land via `PUT /v1/tenants/me/budgets` (v0.20.3). See [Components → z3rno-server](/components/server) for the endpoint.
+
+### OpenTelemetry tracing
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OTEL_ENABLED` | `false` | When true, instruments FastAPI; W3C `traceparent` propagates outbound. |
+| `OTEL_SERVICE_NAME` | `z3rno-server` | |
+| `OTEL_ENVIRONMENT` | `production` | Stamped as `deployment.environment` on every span. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` | OTLP/gRPC endpoint. |
+
+# v0.20 — Operator polish
+
+### NOTIFY/LISTEN audit drain (v0.20.2)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `Z3RNO_AUDIT_LISTEN_ENABLED` | `false` | Gate read by the `z3rno-audit-listener` console-script (the singleton pod deployed by the chart's `auditListener.enabled` block). When true, the listener opens `LISTEN z3rno_audit_pending` and fires `z3rno.audit_drain` on every notification (~50 ms wake instead of waiting for beat). |
+
+### Audit-drain tunables (read by the engine; surface them through chart `beat.audit.*`)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AUDIT_DRAIN_BATCH_SIZE` | `500` | Rows per drain transaction. |
+| `AUDIT_DRAIN_INTERVAL_SECONDS` | `1.0` | Beat tick interval. Recommended `60.0` when listener is enabled (poll becomes fallback). |
+| `AUDIT_DRAIN_MAX_ORGS_PER_TICK` | `100` | Bounds per-tick fan-out. |
+
+---
+
+## Reference
+
+- **Source:** [`z3rno-server/src/z3rno_server/config.py`](https://github.com/the-ai-project-co/z3rno-server/blob/main/src/z3rno_server/config.py)
+- **Helm surface:** [Components → z3rno-helm](/components/helm) — these env vars all surface as values keys.
+- **Server reference:** [Components → z3rno-server](/components/server) — endpoint × gating-flag matrix.
+- **Per-release detail:** [`changelogs/`](https://github.com/the-ai-project-co/z3rno-process-docs/tree/main/improvements/changelogs)
